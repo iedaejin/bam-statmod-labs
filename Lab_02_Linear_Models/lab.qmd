@@ -1,0 +1,277 @@
+---
+title: "Lab 02 — Linear models: inference, diagnostics and selection"
+subtitle: "Sessions 5–8: Linear models in theory and in practice"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+In this lab you will:
+
+- fit a multiple linear regression with `lm()`, interpret its coefficients and compute confidence intervals;
+- compare nested models with an $F$ test;
+- check the model assumptions with residual plots;
+- find high-leverage points, outliers (studentized residuals with a Bonferroni cut-off) and influential points (Cook's distance), and see what an influential point changes;
+- measure collinearity with variance inflation factors;
+- select a prediction model with AIC and BIC, fit a lasso with `cv.glmnet()`, and compare the methods on a test set that was never used for fitting, tuning or standardizing.
+
+Work in pairs. Plan for 60–75 minutes. Notation follows the slides: $y=X\beta+\varepsilon$, $X$ is $n\times p$ **including** the intercept column, $H=X(X^\top X)^{-1}X^\top$, $h_{ii}$ its diagonal, $\hat\sigma^2=\mathrm{RSS}/(n-p)$.
+
+## Setup
+
+Open the project for this lab (Posit Cloud or Codespaces) so that the working directory is the lab folder. The two data files are in `data/`; see `data/SOURCE.txt` for their origin.
+
+```{r}
+library(car)       # vif()
+library(glmnet)    # lasso
+savings  <- read.csv("data/savings.csv")
+rownames(savings) <- savings$country
+prostate <- read.csv("data/prostate.csv")
+str(savings)
+str(prostate)
+```
+
+**Part 1** uses `savings`: averages over 1960–1970 for 50 countries. `sr` is personal savings as a percentage of disposable income; `pop15` and `pop75` are the percentages of the population under 15 and over 75; `dpi` is per-capita disposable income in US dollars; `ddpi` is the percentage growth rate of `dpi`. The life-cycle hypothesis predicts that savings are lower where many people are too young or too old to work.
+
+**Part 2** uses `prostate`: 97 men about to undergo radical prostatectomy. The response `lpsa` is the log of prostate-specific antigen; the eight predictors are clinical measures (`lcavol` log cancer volume, `lweight` log prostate weight, `age`, `lbph`, `svi` seminal vesicle invasion (0/1), `lcp`, `gleason`, `pgg45`).
+
+## Part 1: fit and interpret the savings model
+
+```{r}
+fit <- lm(sr ~ pop15 + pop75 + dpi + ddpi, data = savings)
+summary(fit)
+n <- nrow(savings)
+p <- length(coef(fit))      # 5: intercept + 4 slopes
+c(n = n, p = p, df = n - p)
+```
+
+Read the `pop15` row. The estimate is $-0.461$ with standard error $0.145$. Countries whose under-15 share is one percentage point higher, **and that have the same `pop75`, `dpi` and `ddpi`**, have a savings rate about 0.46 points lower on average. This is an association across countries, not the effect of changing a country's age structure.
+
+The standard errors come from $\widehat{\mathrm{Var}}(\hat\beta)=\hat\sigma^2(X^\top X)^{-1}$. Check one by hand:
+
+```{r}
+X <- model.matrix(fit)
+sigma2_hat <- sum(resid(fit)^2) / (n - p)
+se_by_hand <- sqrt(diag(sigma2_hat * solve(crossprod(X))))
+cbind(by_hand = se_by_hand, lm = coef(summary(fit))[, "Std. Error"])
+confint(fit, level = 0.95)
+```
+
+**Your turn.**
+
+1. Compute the 95% confidence interval for the `ddpi` coefficient by hand, as $\hat\beta_j\pm t_{n-p,0.975}\,\mathrm{se}(\hat\beta_j)$, and check it against `confint()`.
+2. Write one sentence interpreting the interval in context.
+3. The $t$ test for `pop75` has $p=0.13$. Does that mean the share of people over 75 is unrelated to savings? (Hint: fit `lm(sr ~ pop75, data = savings)`.)
+
+## Part 1: comparing nested models with an $F$ test
+
+To test several coefficients at once, compare the full model with the model that sets them to zero:
+
+$$
+F=\frac{(\mathrm{RSS}_0-\mathrm{RSS}_1)/(p_1-p_0)}{\mathrm{RSS}_1/(n-p_1)}\sim F_{p_1-p_0,\;n-p_1}\quad\text{under }H_0 .
+$$
+
+Do `pop75` and `dpi` add anything once `pop15` and `ddpi` are in the model?
+
+```{r}
+fit0 <- lm(sr ~ pop15 + ddpi, data = savings)
+anova(fit0, fit)
+RSS0 <- deviance(fit0); RSS1 <- deviance(fit)
+F_stat <- ((RSS0 - RSS1) / 2) / (RSS1 / (n - p))
+c(F = F_stat, p_value = pf(F_stat, 2, n - p, lower.tail = FALSE))
+```
+
+$F=1.72$ on 2 and 45 degrees of freedom, $p=0.19$: no evidence that the two variables jointly improve the fit.
+
+**Your turn.**
+
+1. Test the life-cycle hypothesis directly: $H_0:\beta_{\texttt{pop15}}=\beta_{\texttt{pop75}}=0$ (age structure is irrelevant given income and its growth). Report $F$, its degrees of freedom and the $p$-value.
+2. Why is this not the same as looking at the two separate $t$ tests in `summary(fit)`?
+
+## Part 1: residual plots
+
+Residuals are $e=(I-H)y$, with $\mathrm{Var}(e_i)=\sigma^2(1-h_{ii})$. Standardized residuals $r_i=e_i/(\hat\sigma\sqrt{1-h_{ii}})$ put them on a common scale.
+
+```{r}
+#| fig-width: 9
+#| fig-height: 4
+par(mfrow = c(1, 2))
+plot(fitted(fit), resid(fit), xlab = "Fitted values", ylab = "Residuals",
+     main = "Residuals vs fitted")
+abline(h = 0, lty = 2)
+qqnorm(rstandard(fit), main = "Normal QQ plot of standardized residuals")
+qqline(rstandard(fit))
+```
+
+Look for curvature (the mean is misspecified), a funnel (non-constant variance) and departures from the line in the QQ plot (non-normal errors, or a few extreme points).
+
+**Your turn.**
+
+1. Plot the residuals against each predictor (`pop15`, `pop75`, `dpi`, `ddpi`). Do you see a pattern in any of them? Look at `pop15` in particular: the countries form two groups.
+2. Which assumption (A2 mean, A3 variance, A4 normality) would each of these patterns threaten: curvature, funnel, S-shaped QQ plot?
+
+## Part 1: leverage, outliers and influence
+
+**Leverage.** $h_{ii}$ measures how far case $i$ is from the centre of the predictors. The leverages sum to $p$, so their average is $p/n$; a common flag is $h_{ii}>2p/n$.
+
+```{r}
+h <- hatvalues(fit)
+sum(h)
+sort(h, decreasing = TRUE)[1:5]
+names(h)[h > 2 * p / n]
+```
+
+**Outliers.** The studentized residual $t_i$ uses $\hat\sigma_{(i)}$, the estimate from the fit without case $i$, and follows $t_{n-p-1}$ under the model. Because we look at all $n$ residuals, compare the largest $|t_i|$ with the Bonferroni cut-off $t_{n-p-1,\,1-\alpha/(2n)}$.
+
+```{r}
+t_i <- rstudent(fit)
+sort(abs(t_i), decreasing = TRUE)[1:3]
+crit <- qt(1 - 0.05 / (2 * n), df = n - p - 1)
+crit
+any(abs(t_i) > crit)
+```
+
+**Influence.** Cook's distance combines both:
+$D_i=\dfrac{r_i^2}{p}\cdot\dfrac{h_{ii}}{1-h_{ii}}$. It measures how far all the fitted values move when case $i$ is removed.
+
+```{r}
+D <- cooks.distance(fit)
+sort(D, decreasing = TRUE)[1:5]
+plot(D, type = "h", xlab = "Country (alphabetical)", ylab = "Cook's distance")
+abline(h = 4 / n, lty = 2)
+text(which(D > 4 / n), D[D > 4 / n], names(D)[D > 4 / n], pos = 2, cex = 0.8)
+```
+
+**Your turn.**
+
+1. Which country has the largest leverage, and why? (Look at its values of the predictors.) Is it also the country with the largest studentized residual?
+2. Are there any outliers at the 5% level after the Bonferroni correction?
+3. Refit the model without the country with the largest Cook's distance (`update(fit, subset = country != "...")`). How much does the `ddpi` coefficient change, in units of its standard error? Would you drop the country from the analysis? Justify.
+
+## Part 1: collinearity
+
+The variance of $\hat\beta_j$ is inflated by $\mathrm{VIF}_j=1/(1-R_j^2)$, where $R_j^2$ is the $R^2$ from regressing $x_j$ on the other predictors.
+
+```{r}
+vif(fit)
+cor(savings[, c("pop15", "pop75", "dpi", "ddpi")])
+```
+
+**Your turn.**
+
+1. Compute $\mathrm{VIF}_{\texttt{pop75}}$ from its definition with one `lm()` call, and check it against `vif(fit)`.
+2. By what factor is the standard error of $\hat\beta_{\texttt{pop75}}$ larger than it would be if `pop75` were uncorrelated with the other predictors?
+3. Does collinearity bias the coefficients? Does it hurt predictions for countries similar to those in the data?
+
+## Part 2: split first, then select with AIC and BIC
+
+The goal in Part 2 is **prediction** of `lpsa`. We hold out a test set first and never touch it until the end.
+
+```{r}
+set.seed(2027)
+test_id <- sample(nrow(prostate), 30)       # row positions of the test set
+train <- prostate[-test_id, ]               # the other 67 rows
+test  <- prostate[test_id, ]
+stopifnot(length(intersect(rownames(train), rownames(test))) == 0)
+c(train = nrow(train), test = nrow(test))
+```
+
+The split uses row *positions* drawn from `1:nrow(prostate)`, and `prostate[-test_id, ]` removes exactly those rows. A common bug is to draw positions from one vector and use them to index a different one, so that some test rows end up in the training set; the `stopifnot()` line guards against it.
+
+For a Gaussian linear model with $k$ estimated parameters,
+$\mathrm{AIC}=-2\hat\ell+2k$ and $\mathrm{BIC}=-2\hat\ell+k\log n$. `step()` drops terms one at a time while the criterion decreases. It reports `extractAIC()`, which equals AIC up to a constant that is the same for every model fitted to the same data.
+
+```{r}
+full_tr <- lm(lpsa ~ ., data = train)
+m_aic <- step(full_tr, trace = 0)
+formula(m_aic)
+c(AIC_full = AIC(full_tr), AIC_selected = AIC(m_aic))
+```
+
+**Your turn.**
+
+1. Run backward selection with the BIC penalty (`k = log(nrow(train))`). Which predictors are kept?
+2. Why does BIC keep fewer predictors than AIC here?
+3. `summary(m_aic)` prints $p$-values for the selected predictors. Why should you not report them as tests of association?
+
+## Part 2: the lasso with cross-validation and an honest comparison
+
+`glmnet` minimises
+$$
+\frac{1}{2n}\sum_{i=1}^n(y_i-\beta_0-x_i^\top\beta)^2+\lambda\Big[\tfrac{1-\alpha}{2}\lVert\beta\rVert_2^2+\alpha\lVert\beta\rVert_1\Big],
+$$
+with $\alpha=1$ for the lasso. By default it standardizes each predictor before penalizing (`standardize = TRUE`) and reports coefficients on the original scale. Because we pass **only the training matrix**, the means and standard deviations used for standardizing come from the training data. We fix the cross-validation folds with `foldid` so that the result is reproducible.
+
+```{r}
+x_tr <- as.matrix(train[, names(train) != "lpsa"])
+x_te <- as.matrix(test[, names(test) != "lpsa"])
+set.seed(2028)
+foldid <- sample(rep(1:10, length.out = nrow(train)))
+cv <- cv.glmnet(x_tr, train$lpsa, alpha = 1, foldid = foldid)
+c(lambda_min = cv$lambda.min, lambda_1se = cv$lambda.1se)
+round(cbind(min = coef(cv, s = "lambda.min")[, 1],
+            se1 = coef(cv, s = "lambda.1se")[, 1]), 3)
+```
+
+```{r}
+#| fig-width: 9
+#| fig-height: 4
+par(mfrow = c(1, 2))
+plot(cv)                                                     # CV curve
+plot(cv$glmnet.fit, xvar = "lambda", label = TRUE)           # coefficient paths
+abline(v = log(c(cv$lambda.min, cv$lambda.1se)), lty = 2)
+```
+
+Read the path plot from right to left: as $\lambda$ decreases, predictors enter one at a time.
+
+Now compare everything on the test set, which has not been used so far:
+
+```{r}
+mse <- function(pred) mean((test$lpsa - pred)^2)
+test_mse <- c(
+  null      = mse(mean(train$lpsa)),
+  ols_full  = mse(predict(full_tr, test)),
+  step_aic  = mse(predict(m_aic, test)),
+  lasso_min = mse(predict(cv, x_te, s = "lambda.min")),
+  lasso_1se = mse(predict(cv, x_te, s = "lambda.1se"))
+)
+round(test_mse, 3)
+```
+
+**What leakage looks like.** If we tune and fit the lasso on all 97 men and then "test" on 30 of them, the test rows have been used for fitting:
+
+```{r}
+x_all <- as.matrix(prostate[, names(prostate) != "lpsa"])
+set.seed(2028)
+cv_leaky <- cv.glmnet(x_all, prostate$lpsa, alpha = 1,
+                      foldid = sample(rep(1:10, length.out = nrow(prostate))))
+c(leaky = mse(predict(cv_leaky, x_te, s = "lambda.min")),
+  honest = unname(test_mse["lasso_min"]))
+```
+
+The leaky number is far too optimistic. The same happens, less visibly, if you standardize the predictors with the means and SDs of the full data before splitting.
+
+**Your turn.**
+
+1. Add the BIC model from the previous section to `test_mse`. Which method has the smallest test MSE on this split?
+2. Which predictors does the lasso keep at `lambda.1se`? Compare with the BIC model.
+3. (Optional, 5 minutes.) Repeat the whole comparison for 20 different splits (wrap the code in a function of the seed) and look at the mean and SD of each method's test MSE. Is the ranking from one split reliable?
+
+## Summary
+
+- Part 1: `pop15` and `ddpi` carry the evidence; the age variables are strongly collinear; Libya is influential through leverage, not through a large residual; no country is an outlier after the Bonferroni correction.
+- Part 2: AIC, BIC and the lasso give different sparse models. On a single held-out set of 30 men, the differences in test error between methods are smaller than the variation between random splits, so a single split cannot rank them reliably. The only clear message is that leakage makes a model look much better than it is.
+
+## DELIVERABLE
+
+Open `tutorial.Rmd` in this folder and click **Run Document**. Answer the questions (the exercise boxes have the data and the fitted models already loaded), type your name, and download the `.txt` file. Upload the `.txt` to Blackboard **before the next session**. It counts toward *Intermediate tests*. One file per student, even if you worked in a pair.
+
+## Source
+
+`savings.csv` and `prostate.csv` are written unchanged from the R package `faraway` (Julian Faraway). See `data/SOURCE.txt`.

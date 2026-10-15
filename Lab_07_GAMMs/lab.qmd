@@ -1,0 +1,213 @@
+---
+title: "Lab 07 — Generalized Additive Mixed Models"
+subtitle: "Session 27: GAMMs, smoothers as mixed models, gamm() and gamm4()"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+The Oxford boys data follow 26 boys, each measured on 9 occasions. Every boy grows smoothly, but boys differ in their height and in how fast they grow. You will model both parts: a smooth population growth curve and random effects for the boys. By the end you should be able to:
+
+- add random intercepts and random slopes to a GAM with `s(Subject, bs = "re")`, and subject-specific smooths with `bs = "fs"`;
+- read variance components with `gam.vcomp()` and compute an intraclass correlation;
+- fit the same model with `mgcv::gamm()` and `gamm4::gamm4()`, and know what the `$gam`, `$lme` and `$mer` components are for;
+- check numerically that a penalized spline is a mixed model with $\lambda=\sigma^2/\sigma_b^2$;
+- interpret a GAMM at the population and at the subject level.
+
+Work in pairs; the lab takes 60–75 minutes. Answer the questions in `tutorial.Rmd` as you go.
+
+## Setup
+
+```{r}
+library(mgcv)     # gam(), gamm(), gam.vcomp()
+library(nlme)     # lme(), VarCorr(), pdIdent()
+library(gamm4)    # gamm4()
+library(splines)  # splineDesign()
+ox <- read.csv("data/Oxboys.csv")
+ox$Subject <- factor(ox$Subject)       # needed for bs = "re" and "fs"
+str(ox)
+table(table(ox$Subject))               # 26 boys, 9 measurements each
+```
+
+`age` is standardised (from −1 to 1) and `height` is in cm.
+
+```{r}
+plot(height ~ age, data = ox, type = "n", xlab = "standardised age", ylab = "height (cm)")
+for (s in levels(ox$Subject)) lines(height ~ age, data = subset(ox, Subject == s), col = "grey40")
+```
+
+**Your turn.** Describe the plot in two sentences: what is common to all boys, and how do they differ?
+
+## A population smooth plus random intercepts
+
+The model is
+
+$$\text{height}_{ij}=\beta_0+f(\text{age}_{ij})+b_{0i}+\varepsilon_{ij},\qquad b_{0i}\sim N(0,\sigma_b^2),\quad \varepsilon_{ij}\sim N(0,\sigma^2).$$
+
+In `mgcv`, a random intercept is a smooth term with basis `"re"`: its coefficients get an identity penalty, which is the same as an iid normal distribution with variance $\sigma_b^2=\sigma^2/\lambda$.
+
+```{r}
+m1 <- gam(height ~ s(age) + s(Subject, bs = "re"), data = ox, method = "REML")
+summary(m1)$s.table
+vc <- gam.vcomp(m1)
+vc
+```
+
+The intraclass correlation is the share of the total variance that lies between boys:
+
+```{r}
+sd_b <- vc$vc["s(Subject)", "std.dev"]
+sd_e <- vc$vc["scale", "std.dev"]
+icc <- sd_b^2 / (sd_b^2 + sd_e^2)
+c(sd_b = sd_b, sd_e = sd_e, ICC = icc)
+```
+
+**Your turn.** (a) Interpret $\hat\sigma_b$ and $\hat\sigma$ in centimetres. (b) Why is the edf of `s(Subject)` close to 25 although there are 26 boys? (c) What does the edf of `s(age)` say about the shape of the population growth curve?
+
+## Subject-specific curves
+
+Random intercepts make all boys' curves parallel. Two ways to let them differ in shape:
+
+- **random slopes**, `s(Subject, age, bs = "re")`: each boy has his own linear rate (independent of his intercept in `gam()`);
+- **factor-smooth interaction**, `s(age, Subject, bs = "fs")`: each boy has his own smooth curve, all with the same smoothing parameters.
+
+```{r}
+m2 <- gam(height ~ s(age) + s(Subject, bs = "re") + s(Subject, age, bs = "re"),
+          data = ox, method = "REML")
+m3 <- gam(height ~ s(age, k = 5) + s(age, Subject, bs = "fs", k = 5),
+          data = ox, method = "REML")
+gam.vcomp(m2)$vc
+AIC(m1, m2, m3)
+```
+
+Repeated measurements on a boy are taken in order, so look at the correlation between consecutive residuals of the same boy:
+
+```{r}
+lag1 <- function(r) {
+  d <- split(r, ox$Subject)
+  cor(unlist(lapply(d, function(v) v[-length(v)])),
+      unlist(lapply(d, function(v) v[-1])))
+}
+c(m1 = lag1(residuals(m1)), m2 = lag1(residuals(m2)), m3 = lag1(residuals(m3)))
+```
+
+**Your turn.** (a) Which model has the lowest AIC? (b) Explain why the random-intercept model leaves a strong positive lag-1 correlation. (c) The factor-smooth model has a negative lag-1 correlation: what might that indicate?
+
+## The same model with `gamm()` and `gamm4()`
+
+`gamm()` fits the GAMM through `nlme::lme()`. It returns a list with two parts:
+
+- `$gam`: a `gam` object for the smooth terms (summary, plots, predictions);
+- `$lme`: the underlying mixed model (variance components, BLUPs, log-likelihood).
+
+Unlike `gam()`, it allows correlated random intercepts and slopes.
+
+```{r}
+g2 <- gamm(height ~ s(age), random = list(Subject = ~ 1 + age),
+           data = ox, method = "REML")
+names(g2)
+summary(g2$gam)$s.table
+VarCorr(g2$lme)
+```
+
+In `VarCorr(g2$lme)` the block `g = pdIdnot(Xr - 1)` is the smooth `s(age)`: its wiggly coefficients are random effects with one common variance. The block `Subject` contains the random intercept and slope, their standard deviations and their correlation.
+
+`gamm4()` fits the same model through `lme4`, with `lme4` formula syntax:
+
+```{r}
+g4 <- gamm4(height ~ s(age), random = ~ (1 + age | Subject), data = ox, REML = TRUE)
+lme4::VarCorr(g4$mer)
+```
+
+**Your turn.** (a) Report the standard deviation of the random slopes and the correlation between intercepts and slopes. Interpret the sign of the correlation. (b) Which component would you use to plot the population growth curve, and which for a likelihood-ratio test of the random slopes?
+
+## A penalized spline is a mixed model
+
+Take a P-spline with $K$ cubic B-splines and a second-order difference penalty:
+$\lVert y-B\alpha\rVert^2+\lambda\,\alpha^\top S\alpha$ with $S=D_2^\top D_2$.
+Eigen-decompose $S=U\Sigma U^\top$; write $\alpha=U_0\beta_0+U_+\Sigma_+^{-1/2}b$, where $U_0$ spans the null space (constant and linear sequences). Then $\alpha^\top S\alpha=b^\top b$ and
+
+$$y=X\beta+Zb+\varepsilon,\qquad X=[\mathbf 1,x],\quad Z=BU_+\Sigma_+^{-1/2},\quad b\sim N(0,\sigma_b^2I),\quad \lambda=\sigma^2/\sigma_b^2 .$$
+
+The Oxboys population curve is almost a straight line, so the variance of the wiggly part is essentially zero there and the check is not informative. We use a simple, clearly non-linear case instead: head acceleration after a simulated motorcycle impact (`mcycle`, Lab 05).
+
+```{r}
+mc <- read.csv("data/mcycle.csv")
+y <- mc$accel; x <- mc$times
+nseg <- 17; dx <- diff(range(x)) / nseg
+knots <- seq(min(x) - 3 * dx, max(x) + 3 * dx, by = dx)
+B <- splineDesign(knots, x, ord = 4, outer.ok = TRUE)        # K = 20
+S <- crossprod(diff(diag(ncol(B)), differences = 2))
+fit_pen <- gam(y ~ B - 1, paraPen = list(B = list(S)), method = "REML")
+c(lambda_gam = fit_pen$sp, edf = sum(fit_pen$edf))
+```
+
+Now the mixed-model version:
+
+```{r}
+e <- eigen(S, symmetric = TRUE)
+pos <- e$values > 1e-8
+Z <- B %*% e$vectors[, pos] %*% diag(1 / sqrt(e$values[pos]))
+g <- factor(rep(1, length(y)))                 # a single group
+fit_lme <- lme(y ~ x, random = list(g = pdIdent(~ Z - 1)), method = "REML")
+s2  <- fit_lme$sigma^2
+s2b <- as.numeric(VarCorr(fit_lme)[1, "Variance"])
+c(sigma2 = s2, sigma2_b = s2b, lambda_lme = s2 / s2b, lambda_gam = fit_pen$sp,
+  max_fitted_diff = max(abs(fitted(fit_lme) - fitted(fit_pen))))
+```
+
+**Your turn.** (a) How many fixed and how many random coefficients does the mixed-model form have? (b) Compare $\hat\sigma^2/\hat\sigma_b^2$ with $\hat\lambda$. (c) What would happen to the fitted curve if $\hat\sigma_b^2$ were 0?
+
+## Correlated residuals: a warning
+
+`gamm()` also accepts a residual correlation structure. Try an AR(1) process within each boy on top of the random intercept:
+
+```{r}
+gc1 <- gamm(height ~ s(age), random = list(Subject = ~ 1),
+            correlation = corAR1(form = ~ Occasion | Subject),
+            data = ox, method = "REML")
+gc1$lme$modelStruct$corStruct
+VarCorr(gc1$lme)[c("(Intercept)", "Residual"), ]
+```
+
+The estimated AR(1) parameter is close to 1 and the random-intercept standard deviation collapses to almost 0: a correlation that is nearly constant within a boy can be explained either by a random intercept or by $\phi\approx1$. The design (growth with boy-specific rates) suggests random intercepts and slopes, which already remove most of the residual correlation (Section 3).
+
+**Your turn.** In one sentence: why is it risky to add both a random intercept and an AR(1) structure with only 9 observations per boy?
+
+## Interpretation: population and subject level
+
+Predictions from `gam()` include the random effects unless you exclude them:
+
+```{r}
+nd <- data.frame(age = seq(-1, 1, length.out = 50), Subject = "1")
+pop <- predict(m2, nd, exclude = c("s(Subject)", "s(Subject,age)"))
+boy <- predict(m2, nd)
+plot(height ~ age, data = ox, col = "grey70", pch = 16, cex = 0.6,
+     xlab = "standardised age", ylab = "height (cm)")
+lines(nd$age, pop, lwd = 3, col = "navy")
+lines(nd$age, boy, lwd = 2, col = "red")
+points(height ~ age, data = subset(ox, Subject == "1"), col = "red", pch = 16)
+```
+
+The growth of a typical boy over the whole age window, with its standard error:
+
+```{r}
+X <- predict(m2, data.frame(age = c(-1, 1), Subject = "1"), type = "lpmatrix",
+             exclude = c("s(Subject)", "s(Subject,age)"))
+d <- X[2, ] - X[1, ]
+est <- sum(d * coef(m2)); se <- sqrt(drop(t(d) %*% vcov(m2) %*% d))
+c(growth_cm = est, lower = est - 1.96 * se, upper = est + 1.96 * se)
+```
+
+**Your turn.** Combine this number with the random-slope standard deviation from Section 3 to describe how much boys differ in their growth over the period.
+
+## DELIVERABLE
+
+1. Complete `tutorial.Rmd` (Run Document), answer every question, type your name and download the `.txt`. Upload the `.txt` to Blackboard **before Session 28**.
+2. In the last open question of the tutorial, write a short **interpretation** (100–150 words) of the growth model for a paediatrician: the typical growth over the period (with an interval), how much boys differ in height and in growth rate, and one limitation of the analysis.

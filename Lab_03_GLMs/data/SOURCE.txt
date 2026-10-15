@@ -1,0 +1,29 @@
+birthwt.csv
+  Source: R package 'MASS' (Venables and Ripley), version 7.3-66, object 'birthwt': risk factors
+  associated with low infant birth weight; 189 births at Baystate Medical Center, Springfield,
+  Massachusetts, during 1986.
+  Original reference: Hosmer, D. W. and Lemeshow, S. (1989) Applied Logistic Regression. New York: Wiley.
+  Also: Venables, W. N. and Ripley, B. D. (2002) Modern Applied Statistics with S. Fourth edition. Springer.
+  Columns: low (1 if birth weight < 2.5 kg), age (years), lwt (mother's weight at last menstrual period,
+  pounds), race (white, black, other; coded 1, 2, 3 in MASS), smoke (smoking during pregnancy),
+  ptl (number of previous premature labours), ht (history of hypertension), ui (uterine irritability),
+  ftv (number of physician visits in the first trimester), bwt (birth weight, grams).
+  Values unchanged except that race is written with its labels; written with
+    bw <- MASS::birthwt
+    bw$race <- factor(bw$race, levels = 1:3, labels = c("white", "black", "other"))
+    write.csv(bw, "birthwt.csv", row.names = FALSE)
+  License: MASS is distributed under the GNU General Public License, version 2 or 3 (GPL-2 | GPL-3).
+
+ships.csv
+  Source: R package 'MASS' (Venables and Ripley), version 7.3-66, object 'ships': data frame giving the
+  number of damage incidents and aggregate months of service by ship type, year of construction,
+  and period of operation.
+  Original reference: McCullagh, P. and Nelder, J. A. (1989) Generalized Linear Models. Second edition.
+  Chapman & Hall, Section 6.3.2.
+  Columns: type (A-E), year (year of construction: 60 = 1960-64, 65 = 1965-69, 70 = 1970-74, 75 = 1975-79),
+  period (period of operation: 60 = 1960-74, 75 = 1975-79), service (aggregate months of service),
+  incidents (number of damage incidents). Six rows have service = 0; the lab drops them.
+  Values unchanged; written with write.csv(MASS::ships, "ships.csv", row.names = FALSE).
+  License: MASS is distributed under the GNU General Public License, version 2 or 3 (GPL-2 | GPL-3).
+
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

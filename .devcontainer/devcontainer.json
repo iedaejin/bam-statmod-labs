@@ -1,0 +1,25 @@
+{
+  "name": "Statistical Modelling Labs (BAM)",
+  "image": "ghcr.io/rocker-org/devcontainer/tidyverse:4.4",
+  "features": {
+    "ghcr.io/rocker-org/devcontainer-features/quarto-cli:1": {
+      "version": "latest"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "quarto.quarto",
+        "REditorSupport.r"
+      ],
+      "settings": {
+        "files.associations": {
+          "*.qmd": "quarto"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [8787],
+  "remoteUser": "rstudio"
+}

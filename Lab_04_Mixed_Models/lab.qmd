@@ -1,0 +1,257 @@
+---
+title: "Lab 04 — Mixed models in R"
+subtitle: "Sessions 15–19: Linear mixed models, ML/REML, BLUPs and GLMMs"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+In this lab you will:
+
+- compare complete pooling, no pooling and partial pooling on repeated-measures data;
+- fit the same linear mixed model with `lme4::lmer()` and `nlme::lme()` and read variance components on the scale of the data;
+- see the difference between REML and ML, and use each one where it belongs;
+- test a random slope with a likelihood-ratio test and the boundary correction;
+- compute BLUPs, check the shrinkage factor by hand and draw a shrinkage plot;
+- diagnose an LMM at both levels (residuals and predicted random effects);
+- fit a binomial GLMM with `glmer()`, compare the Laplace approximation with adaptive quadrature, and separate conditional from marginal effects.
+
+Work in pairs. Plan for 60–75 minutes. Notation follows the slides: groups $i=1,\dots,m$, observations $j=1,\dots,n_i$,
+$y_{ij}=\beta_0+b_{0i}+(\beta_1+b_{1i})x_{ij}+\varepsilon_{ij}$, $b\sim N(0,G)$, $\varepsilon\sim N(0,\sigma^2 I)$, $V=ZGZ^\top+\sigma^2I$, random-intercept variance $\sigma_b^2$, ICC $=\sigma_b^2/(\sigma_b^2+\sigma^2)$. Fixed effects are **estimated**; random effects are **predicted**.
+
+## Setup
+
+Open the project for this lab so that the working directory is the lab folder. The two data files are in `data/`; see `data/SOURCE.txt` for their origin.
+
+```{r}
+library(lme4)
+library(nlme)       # masks lme4::lmList; we call lme4::lmList explicitly below
+library(ggplot2)
+
+sleep <- read.csv("data/sleepstudy.csv")
+sleep$Subject <- factor(sleep$Subject)
+
+cbpp <- read.csv("data/cbpp.csv")
+cbpp$herd   <- factor(cbpp$herd)
+cbpp$period <- factor(cbpp$period)
+
+str(sleep)
+str(cbpp)
+```
+
+`sleep` has 180 rows: 18 subjects measured on Days 0–9 of sleep restriction; `Reaction` is the mean reaction time in ms. `cbpp` has 56 herd-periods: `incidence` new cases of a cattle disease among `size` animals, for 15 herds over 4 periods.
+
+## Part 1 — Three ways to pool `sleepstudy`
+
+```{r}
+ggplot(sleep, aes(Days, Reaction)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.6) +
+  facet_wrap(~ Subject, nrow = 3) +
+  labs(y = "Reaction time (ms)")
+```
+
+Every subject has a roughly linear trend, but intercepts and slopes differ. Fit the three strategies.
+
+```{r}
+fit_cp <- lm(Reaction ~ Days, data = sleep)                         # complete pooling
+fit_np <- lme4::lmList(Reaction ~ Days | Subject, data = sleep)     # no pooling
+fit_pp <- lmer(Reaction ~ Days + (Days | Subject), data = sleep)    # partial pooling (REML)
+
+coef(fit_cp)
+head(coef(fit_np))
+head(coef(fit_pp)$Subject)
+```
+
+The fixed effects of `fit_pp` are $(\hat\beta_0,\hat\beta_1)=(251.4,\,10.47)$, the same as the pooled `lm()` because the design is balanced. Their standard errors are not the same:
+
+```{r}
+rbind(lm   = summary(fit_cp)$coefficients[, "Std. Error"],
+      lmer = summary(fit_pp)$coefficients[, "Std. Error"])
+```
+
+**Your turn.**
+
+1. Which standard error for the `Days` slope do you trust, and why is the `lm()` one too small?
+2. Subject 335 has a negative slope in its own `lm()` fit. What slope does the mixed model give it? Explain the change in one sentence.
+
+## Part 2 — The same LMM in `lme4` and `nlme`
+
+```{r}
+fit_lme <- lme(Reaction ~ Days, random = ~ Days | Subject, data = sleep)   # REML by default
+fixef(fit_pp); fixef(fit_lme)
+VarCorr(fit_pp)
+VarCorr(fit_lme)
+```
+
+Both fit the model with REML and agree: $\hat\sigma_{b0}=24.7$ ms, $\hat\sigma_{b1}=5.92$ ms/day, $\hat\rho=0.07$, $\hat\sigma=25.6$ ms. (The function for linear mixed models in `nlme` is `lme()`; `nlme()` itself is for *non-linear* mixed models.) `nlme` also prints approximate p-values and offers `intervals()`:
+
+```{r}
+intervals(fit_lme)
+```
+
+Variance components are read on the scale of the data. About 95% of subjects have a slope within $\hat\beta_1\pm1.96\,\hat\sigma_{b1}$:
+
+```{r}
+fixef(fit_pp)["Days"] + c(-1.96, 1.96) * attr(VarCorr(fit_pp)$Subject, "stddev")["Days"]
+```
+
+Now fit a random-intercept model and compute its ICC:
+
+```{r}
+fit_ri <- lmer(Reaction ~ Days + (1 | Subject), data = sleep)
+vc <- as.data.frame(VarCorr(fit_ri))
+vc
+```
+
+**Your turn.**
+
+3. Compute the ICC $\hat\sigma_b^2/(\hat\sigma_b^2+\hat\sigma^2)$ of `fit_ri` from `vc$vcov`. Interpret it.
+4. Under `fit_ri`, what is the implied correlation between a subject's Day 0 and Day 9 measurements? Is that plausible given the facet plot? (Hint: compound symmetry.)
+
+## Part 3 — REML vs ML, and likelihood-ratio tests
+
+```{r}
+fit_pp_ml <- update(fit_pp, REML = FALSE)
+rbind(REML = c(attr(VarCorr(fit_pp)$Subject, "stddev"), sigma = sigma(fit_pp)),
+      ML   = c(attr(VarCorr(fit_pp_ml)$Subject, "stddev"), sigma = sigma(fit_pp_ml)))
+```
+
+ML gives smaller standard deviations of the random effects: it ignores that two fixed effects were estimated (the analogue of $\mathrm{RSS}/n$ versus $\mathrm{RSS}/(n-p)$). REML is less biased; it is not unbiased in general.
+
+**Testing a fixed effect** needs ML fits, because REML likelihoods of models with different fixed effects are not comparable. `anova()` refits with ML automatically:
+
+```{r}
+fit_pp0 <- update(fit_pp, . ~ . - Days)
+anova(fit_pp0, fit_pp)          # note the message: refitting with ML
+```
+
+**Testing the random slope.** The two models below have the same fixed effects, so the REML fits can be compared (`refit = FALSE`). Under $H_0$ the slope variance is 0, on the boundary of the parameter space, so the LRT statistic $T$ follows a 50:50 mixture of $\chi^2_1$ and $\chi^2_2$, not $\chi^2_2$.
+
+```{r}
+a <- anova(fit_ri, fit_pp, refit = FALSE)
+a
+T_slope <- a$Chisq[2]
+c(T = T_slope,
+  p_naive   = pchisq(T_slope, df = 2, lower.tail = FALSE),
+  p_mixture = 0.5 * pchisq(T_slope, 1, lower.tail = FALSE) +
+              0.5 * pchisq(T_slope, 2, lower.tail = FALSE))
+```
+
+**Your turn.**
+
+5. Is the correlation $\rho$ needed? Fit `lmer(Reaction ~ Days + (Days || Subject), data = sleep)` (uncorrelated intercept and slope) and compare it with `fit_pp` by LRT and by `AIC()`. Is this a boundary test?
+6. Test the random intercept itself: compare `fit_ri` refitted with ML against `fit_cp` (an `lm`), and compute the boundary-corrected p-value $\tfrac12P(\chi^2_1>T)$.
+
+## Part 4 — BLUPs and shrinkage
+
+The predicted random effects are $\tilde b=GZ^\top V^{-1}(y-X\hat\beta)$. In the random-intercept model each subject's BLUP is its raw deviation multiplied by the shrinkage factor $k_i=n_i\sigma_b^2/(n_i\sigma_b^2+\sigma^2)$.
+
+```{r}
+sigma_b2 <- vc$vcov[1]; sigma2 <- vc$vcov[2]
+k <- 10 * sigma_b2 / (10 * sigma_b2 + sigma2)
+X <- model.matrix(~ Days, sleep)
+raw  <- tapply(sleep$Reaction - X %*% fixef(fit_ri), sleep$Subject, mean)
+blup <- ranef(fit_ri)$Subject[, 1]
+head(cbind(raw, k_times_raw = k * raw, blup))
+k
+```
+
+For the random-intercept-and-slope model, draw each subject's no-pooling coefficients and its partial-pooling coefficients in the (intercept, slope) plane:
+
+```{r}
+sh <- data.frame(a_np = coef(fit_np)[, 1], b_np = coef(fit_np)[, 2],
+                 a_pp = coef(fit_pp)$Subject[, 1], b_pp = coef(fit_pp)$Subject[, 2])
+ggplot(sh) +
+  geom_segment(aes(x = a_np, y = b_np, xend = a_pp, yend = b_pp),
+               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
+  geom_point(aes(a_np, b_np), colour = "firebrick") +
+  geom_point(aes(a_pp, b_pp), colour = "navy") +
+  annotate("point", x = fixef(fit_pp)[1], y = fixef(fit_pp)[2], shape = 4, size = 5) +
+  labs(x = "Intercept (ms)", y = "Slope (ms/day)",
+       title = "No pooling (red) to partial pooling (navy); x = fixed effects")
+```
+
+**Your turn.**
+
+7. Remove Days 2–9 for subjects 308, 309 and 310 (keep only two observations each), refit the random-intercept model, and compute $k_i$ for $n_i=2$ and $n_i=10$. Check that `ranef()` divided by the raw deviation gives $k_i$. Which subjects are shrunk more, and why?
+
+## Part 5 — Diagnostics at two levels
+
+```{r}
+#| fig-height: 7
+re <- ranef(fit_pp)$Subject
+op <- par(mfrow = c(2, 2))
+plot(fitted(fit_pp), resid(fit_pp), xlab = "Fitted", ylab = "Conditional residual")
+abline(h = 0, lty = 2)
+qqnorm(resid(fit_pp), main = "Residuals"); qqline(resid(fit_pp))
+qqnorm(re[, 1], main = "BLUP intercepts"); qqline(re[, 1])
+qqnorm(re[, 2], main = "BLUP slopes"); qqline(re[, 2])
+par(op)
+```
+
+Conditional residuals $y-X\hat\beta-Z\tilde b$ check the within-subject part of the model; the predicted random effects check the between-subject part. With 18 subjects the BLUP QQ plots are only a rough check, and BLUPs are shrunk, so their spread is smaller than $\hat\sigma_b$.
+
+**Your turn.**
+
+8. Which observation has the largest standardised residual (`resid(fit_pp, scaled = TRUE)`)? Refit without it. Do $\hat\beta_1$ and $\hat\sigma$ change much?
+
+## Part 6 — A binomial GLMM: `cbpp`
+
+The GLMM is specified conditionally on the herd effect:
+$\mathrm{logit}\,P(\text{new case}\mid b_{0i})=\beta_0+\beta_{\text{period}}+b_{0i}$, $b_{0i}\sim N(0,\sigma_b^2)$, i.e. $\E[y\mid b]=g^{-1}(X\beta+Zb)$.
+
+```{r}
+fit_glm <- glm(cbind(incidence, size - incidence) ~ period, family = binomial, data = cbpp)
+sum(residuals(fit_glm, type = "pearson")^2) / df.residual(fit_glm)    # overdispersion?
+
+fit_lap <- glmer(cbind(incidence, size - incidence) ~ period + (1 | herd),
+                 family = binomial, data = cbpp)
+summary(fit_lap)
+```
+
+The likelihood is an integral over $b_{0i}$ with no closed form. `glmer()` uses the Laplace approximation by default (`nAGQ = 1`); adaptive Gauss–Hermite quadrature with more nodes approaches the exact likelihood.
+
+```{r}
+fit_agq <- update(fit_lap, nAGQ = 25)
+rbind(Laplace = c(fixef(fit_lap), sd_herd = attr(VarCorr(fit_lap)$herd, "stddev")),
+      AGQ25   = c(fixef(fit_agq), sd_herd = attr(VarCorr(fit_agq)$herd, "stddev")))
+```
+
+Compare estimates, not `logLik()` values: `lme4` reports log-likelihoods on different scales for `nAGQ = 1` and `nAGQ > 1`.
+
+**Conditional vs marginal.** `exp(fixef(fit_lap))` gives odds ratios *for a given herd*. The population-averaged probability averages the herd-specific probability over $b\sim N(0,\hat\sigma_b^2)$:
+
+```{r}
+sb  <- attr(VarCorr(fit_lap)$herd, "stddev")
+eta <- fixef(fit_lap)[1] + c(0, fixef(fit_lap)[-1])
+p_typical <- plogis(eta)                                   # herd with b = 0
+p_average <- sapply(eta, function(e)
+  integrate(function(b) plogis(e + b) * dnorm(b, 0, sb), -Inf, Inf)$value)
+round(rbind(p_typical, p_average), 4)
+fixef(fit_lap) / sqrt(1 + 0.346 * sb^2)                    # approximate marginal coefficients
+```
+
+**Your turn.**
+
+9. Interpret $e^{\hat\beta_{\text{period2}}}$ in one sentence, making clear that it is conditional on the herd.
+10. Why is the period-1 probability of a typical herd (0.198) smaller than the population average (0.216)? Which of the two would you report to a ministry planning vaccine supplies?
+11. Test the herd variance: compute $T=2(\ell_{\text{GLMM}}-\ell_{\text{GLM}})$ and the boundary-corrected p-value.
+
+## Summary
+
+- Grouped data violate independence; `lm()` standard errors are wrong.
+- An LMM is a linear model whose covariance $V=ZGZ^\top+\sigma^2I$ is built from a few variance components.
+- REML for variance components; ML to compare fixed effects; halve (or mix) the $\chi^2$ for variance components on the boundary.
+- BLUPs shrink each group towards the population by $k_i=n_i\sigma_b^2/(n_i\sigma_b^2+\sigma^2)$.
+- In a GLMM the coefficients are conditional; population-averaged effects are smaller in absolute value for the logit link.
+
+## DELIVERABLE
+
+Open `tutorial.Rmd` in this folder and click **Run Document**. Answer the questions (the exercise boxes have the data and models already loaded), type your name, and download the `.txt` file. Upload the `.txt` to Blackboard **before the next session**. It counts toward *Intermediate tests*. One file per student, even if you worked in a pair.

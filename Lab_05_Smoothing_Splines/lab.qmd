@@ -1,0 +1,306 @@
+---
+title: "Lab 05 — Smoothing and splines in R"
+subtitle: "Sessions 20–22: Polynomials, kernels, LOESS, regression and smoothing splines, P-splines"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+In this lab you will:
+
+- see why global polynomials of increasing degree fail on a curve with a sharp local feature;
+- fit kernel smoothers with `ksmooth()` and translate its `bandwidth` into the kernel standard deviation $h$;
+- choose the LOESS span by 10-fold cross-validation with **shuffled** folds, and see what goes wrong without shuffling;
+- fit regression splines with `bs()`/`ns()` inside `lm()` and a smoothing spline with `smooth.spline()`;
+- code a P-spline yourself (B-spline basis, difference penalty, $\lambda$ by GCV) and check it against `mgcv`;
+- compare all fits at similar effective degrees of freedom and diagnose the residuals.
+
+Work in pairs. Plan for 60–75 minutes. Notation follows the slides: $\hat f = S y$, effective degrees of freedom $\mathrm{edf} = \mathrm{tr}(S)$, bandwidth $h$, knots $\kappa_k$, B-spline basis $B$, difference matrix $D_d$ of order $d$, smoothing parameter $\lambda$, and
+$$\mathrm{GCV} = \frac{n\,\mathrm{RSS}}{(n - \mathrm{edf})^2}.$$
+
+## Setup
+
+Open the project for this lab so that the working directory is the lab folder. The data file is in `data/`; see `data/SOURCE.txt` for its origin.
+
+```{r}
+library(splines)
+library(mgcv)
+mc <- read.csv("data/mcycle.csv")
+x <- mc$times
+y <- mc$accel
+n <- nrow(mc)
+c(n = n, distinct_times = length(unique(x)), sorted = !is.unsorted(x))
+plot(accel ~ times, data = mc, pch = 16, col = "grey40",
+     xlab = "Time after impact (ms)", ylab = "Head acceleration (g)")
+```
+
+The data record the head acceleration of a crash-test dummy after a simulated motorcycle impact (Silverman, 1985). Three features matter for everything that follows: the curve is flat for the first 14 ms, then drops sharply to about $-120$ g and rebounds; the noise is small at the start and large in the middle; and the rows are **sorted by time**, with several tied times.
+
+## Polynomials of increasing degree, and why they fail
+
+A polynomial of degree $q$ is a linear model with $q + 1$ columns. Use orthogonal polynomials (`poly()`) so that the fit is numerically stable.
+
+```{r}
+aic <- sapply(1:15, function(q) AIC(lm(accel ~ poly(times, q), data = mc)))
+round(aic, 1)
+which.min(aic)
+```
+
+AIC keeps improving up to degree 12. But look at what a high-degree fit does at the edge of the data.
+
+```{r}
+m10 <- lm(accel ~ poly(times, 10), data = mc)
+h <- hatvalues(m10)
+c(first = unname(h[1]), last = unname(h[n]), median = median(h))
+predict(m10, data.frame(times = c(57.6, 60, 65)))
+```
+
+The last observation has leverage $h_{nn} \approx 0.985$: it essentially fits itself. Recall $\mathrm{Var}(\hat y_i) = \sigma^2 h_{ii}$. Two and a half milliseconds after the last observation the "prediction" is $-522$ g.
+
+```{r}
+grid <- data.frame(times = seq(min(x), max(x), length.out = 400))
+plot(accel ~ times, data = mc, pch = 16, col = "grey60", ylim = c(-160, 110),
+     xlab = "Time (ms)", ylab = "Acceleration (g)")
+for (q in c(3, 6, 12)) lines(grid$times, predict(lm(accel ~ poly(times, q), data = mc), grid),
+                             lwd = 2, col = c(`3` = "black", `6` = "blue", `12` = "red")[as.character(q)])
+legend("bottomright", bty = "n", lwd = 2, col = c("black", "blue", "red"),
+       legend = paste("degree", c(3, 6, 12)))
+```
+
+**Your turn.**
+
+1. In one sentence, explain why adding a high power of $x$ to fit the dip near 20 ms also changes the fit near 50 ms.
+2. Which columns of `poly(times, 3)` are uncorrelated, and are they independent? (Check `round(cor(poly(x, 3)), 10)`.)
+
+## Kernel smoothing with `ksmooth()`
+
+The Nadaraya–Watson smoother is $\hat f(x) = \sum_j K_h(x - x_j)\,y_j / \sum_j K_h(x - x_j)$. In `ksmooth(..., kernel = "normal", bandwidth = b)` the kernel is scaled so that its quartiles are at $\pm 0.25\,b$. For a Gaussian kernel this means a standard deviation
+$$h = \frac{0.25\,b}{z_{0.75}} \approx 0.3706\,b .$$
+
+```{r}
+bws <- c(2, 5, 10)
+plot(accel ~ times, data = mc, pch = 16, col = "grey60",
+     xlab = "Time (ms)", ylab = "Acceleration (g)")
+for (k in seq_along(bws)) {
+  ks <- ksmooth(x, y, kernel = "normal", bandwidth = bws[k], x.points = x)
+  lines(ks, lwd = 2, col = c("red", "navy", "darkgreen")[k])
+}
+legend("bottomright", bty = "n", lwd = 2, col = c("red", "navy", "darkgreen"),
+       legend = sprintf("bandwidth %d (h = %.2f ms)", bws, 0.25 * bws / qnorm(0.75)))
+```
+
+**Your turn.**
+
+3. Compute the RSS of the three fits. Why is the smallest RSS not a reason to choose `bandwidth = 2`?
+4. Where does `bandwidth = 10` fail? Relate it to the Nadaraya–Watson bias $\approx h^2\mu_2(K)\{f''/2 + f'p'/p\}$.
+
+## LOESS with the span chosen by shuffled cross-validation
+
+`loess()` fits a local quadratic (by default) in a window that contains a fraction `span` of the data. We choose the span by 10-fold cross-validation.
+
+Two details matter:
+
+- The rows are sorted by time. Folds must be **shuffled** with `sample()`; otherwise each test fold is a contiguous block of time and the model has to extrapolate across it.
+- `loess()` returns `NA` when asked to predict outside the range of its training data. `surface = "direct"` makes it compute the local fit at any point.
+
+```{r}
+cv_loess <- function(span, folds) {
+  sse <- 0
+  for (k in unique(folds)) {
+    test <- folds == k
+    m <- loess(accel ~ times, data = mc[!test, ], span = span, degree = 2,
+               control = loess.control(surface = "direct"))
+    sse <- sse + sum((mc$accel[test] - predict(m, mc[test, ]))^2)
+  }
+  sse / n
+}
+spans <- seq(0.15, 0.60, by = 0.025)
+set.seed(2027)
+folds <- sample(rep(1:10, length.out = n))      # shuffled folds
+cv <- sapply(spans, cv_loess, folds = folds)
+span_cv <- spans[which.min(cv)]
+span_cv
+plot(spans, cv, type = "b", pch = 16, xlab = "span", ylab = "10-fold CV error")
+abline(v = span_cv, lty = 2)
+```
+
+Now repeat with folds that follow the sorted order of the data.
+
+```{r}
+folds_sorted <- rep(1:10, each = ceiling(n / 10))[1:n]
+cv_sorted <- sapply(spans, cv_loess, folds = folds_sorted)
+c(best_span_sorted = spans[which.min(cv_sorted)], min_cv_sorted = min(cv_sorted),
+  min_cv_shuffled = min(cv))
+```
+
+With sorted folds every test fold is an extrapolation problem, the CV error is more than twice as large, and it points to a much smoother fit.
+
+```{r}
+lo <- loess(accel ~ times, data = mc, span = span_cv, degree = 2)
+lo$trace.hat                                   # edf = tr(S); not lo$enp
+```
+
+**Your turn.**
+
+5. Re-run the shuffled CV with `set.seed(1)`, `set.seed(2)` and `set.seed(3)`. How stable is the chosen span? What would you report?
+6. Why is `trace.hat` (not the span) the right number to compare with the edf of other smoothers?
+
+## Regression splines with `bs()` and `ns()`
+
+A regression spline is a linear model in a spline basis. `bs(times, df = m)` is a cubic B-spline basis with $m - 3$ interior knots at quantiles; `ns(times, df = m)` is a natural cubic spline basis (linear beyond the boundary knots) with $m - 1$ interior knots. `lm()` adds the intercept.
+
+```{r}
+dfs <- 4:15
+aic_ns <- sapply(dfs, function(df) AIC(lm(accel ~ ns(times, df = df), data = mc)))
+aic_bs <- sapply(dfs, function(df) AIC(lm(accel ~ bs(times, df = df), data = mc)))
+rbind(df = dfs, ns = round(aic_ns, 1), bs = round(aic_bs, 1))
+df_ns <- dfs[which.min(aic_ns)]
+df_ns
+fit_ns <- lm(accel ~ ns(times, df = df_ns), data = mc)
+attr(ns(x, df = df_ns), "knots")
+```
+
+**Your turn.**
+
+7. How many regression coefficients does the AIC-best natural spline have? Where are its knots relative to the dip?
+8. Predict both the `bs()` and the `ns()` fit (each with its AIC-best df) at 65 ms. Which one would you trust less, and why?
+
+## Smoothing spline with GCV
+
+`smooth.spline()` minimizes $\sum_i\{y_i - f(x_i)\}^2 + \lambda\int f''(u)^2\,du$; the solution is a natural cubic spline with knots at the distinct $x_i$. By default $\lambda$ is chosen by GCV.
+
+```{r}
+ss <- smooth.spline(x, y)
+ss$df          # edf = tr(S_lambda)
+```
+
+## A P-spline by hand, checked against `mgcv`
+
+A P-spline uses a rich B-spline basis on equally spaced knots and the penalty $\lambda\lVert D_d\theta\rVert^2$:
+$$\hat\theta = (B^\top B + \lambda D_d^\top D_d)^{-1}B^\top y,\qquad S_\lambda = B(B^\top B + \lambda D_d^\top D_d)^{-1}B^\top .$$
+
+Build a cubic B-spline basis with 20 segments on a domain slightly wider than the data.
+
+```{r}
+bbase <- function(x, xl = min(x) - 0.01, xr = max(x) + 0.01, nseg = 20, bdeg = 3) {
+  dx <- (xr - xl) / nseg
+  knots <- seq(xl - bdeg * dx, xr + bdeg * dx, by = dx)
+  B <- splineDesign(knots, x, ord = bdeg + 1, outer.ok = TRUE)
+  attr(B, "knots") <- knots
+  B
+}
+B <- bbase(x)
+D <- diff(diag(ncol(B)), differences = 2)     # second-order differences
+dim(B); dim(D)
+```
+
+Fit for a given $\lambda$. The edf is $\mathrm{tr}(S_\lambda) = \mathrm{tr}\{(B^\top B + \lambda D^\top D)^{-1}B^\top B\}$, a $c \times c$ computation.
+
+```{r}
+pspline <- function(lambda) {
+  A <- crossprod(B) + lambda * crossprod(D)
+  theta <- solve(A, crossprod(B, y))
+  f <- drop(B %*% theta)
+  edf <- sum(diag(solve(A, crossprod(B))))
+  rss <- sum((y - f)^2)
+  list(f = f, theta = drop(theta), edf = edf, rss = rss, gcv = n * rss / (n - edf)^2)
+}
+loglam <- seq(-3, 6, by = 0.05)
+gcv <- sapply(loglam, function(l) pspline(10^l)$gcv)
+best <- loglam[which.min(gcv)]
+ps <- pspline(10^best)
+c(log10_lambda = best, lambda = 10^best, edf = ps$edf, GCV = ps$gcv)
+plot(loglam, gcv, type = "l", lwd = 2, xlab = "log10(lambda)", ylab = "GCV")
+abline(v = best, lty = 2)
+```
+
+`mgcv` implements the same smoother as `s(times, bs = "ps")`: cubic B-splines on equally spaced knots with a second-order difference penalty.
+
+```{r}
+g_default <- gam(accel ~ s(times, bs = "ps"), data = mc, method = "GCV.Cp")
+sum(g_default$edf)
+g_same <- gam(accel ~ s(times, bs = "ps", k = ncol(B)), data = mc,
+              knots = list(times = attr(B, "knots")), method = "GCV.Cp")
+c(edf_mgcv = sum(g_same$edf), edf_hand = ps$edf,
+  max_abs_diff = max(abs(fitted(g_same) - ps$f)))
+```
+
+The default `s(times, bs = "ps")` has only $k = 10$ basis functions, so its edf (9.7) is capped by the basis. With the same 23 B-splines and knots the two fits agree up to the grid resolution of our $\lambda$ search (`mgcv` optimizes $\lambda$ continuously).
+
+**Your turn.**
+
+9. Change the penalty order to $d = 1$ and $d = 3$ (edit `D`), re-run the GCV search and report the edf. What does each fit tend to as $\lambda \to \infty$?
+10. Check numerically that with $d = 2$ the fit conserves $\sum_i y_i$ and $\sum_i x_iy_i$. Why does it not conserve $\sum_i x_i^2 y_i$?
+
+## Comparing all fits at similar edf
+
+Comparing a bandwidth, a span, a df and a $\lambda$ directly is meaningless. Fix the complexity instead: here every fit uses about 12 effective degrees of freedom.
+
+```{r}
+ns12 <- lm(accel ~ ns(times, df = 11), data = mc)              # 11 + intercept = 12
+ss12 <- smooth.spline(x, y, df = 12)
+lam12 <- 10^uniroot(function(l) pspline(10^l)$edf - 12, c(-3, 3))$root
+ps12 <- pspline(lam12)
+span12 <- uniroot(function(s) loess(accel ~ times, mc, span = s)$trace.hat - 12,
+                  c(0.2, 0.5))$root
+lo12 <- loess(accel ~ times, data = mc, span = span12)
+cmp <- data.frame(
+  fit = c("natural spline (lm)", "smoothing spline", "P-spline", "LOESS (quadratic)"),
+  edf = c(12, ss12$df, ps12$edf, lo12$trace.hat),
+  RSS = c(sum(resid(ns12)^2), sum((y - predict(ss12, x)$y)^2), ps12$rss, sum(resid(lo12)^2)))
+cmp$GCV <- n * cmp$RSS / (n - cmp$edf)^2
+cmp
+```
+
+```{r}
+plot(accel ~ times, data = mc, pch = 16, col = "grey70",
+     xlab = "Time (ms)", ylab = "Acceleration (g)")
+lines(x, fitted(ns12), lwd = 2, col = "black")
+lines(predict(ss12, grid$times), lwd = 2, col = "navy")
+lines(x, ps12$f, lwd = 2, col = "red", lty = 2)
+lines(grid$times, predict(lo12, grid), lwd = 2, col = "darkgreen", lty = 3)
+legend("bottomright", bty = "n", lwd = 2, lty = c(1, 1, 2, 3),
+       col = c("black", "navy", "red", "darkgreen"),
+       legend = c("natural spline", "smoothing spline", "P-spline", "LOESS"))
+```
+
+At equal complexity the three spline fits are almost identical, and LOESS (a local quadratic) is only about 2% better in RSS. The amount of smoothing matters much more than the method.
+
+## Residual diagnostics: is the variance constant?
+
+All the criteria above (GCV, AIC, the pointwise bands drawn by `mgcv`) assume $\mathrm{Var}(\varepsilon_i) = \sigma^2$ for all $i$.
+
+```{r}
+r <- y - ps$f
+plot(x, r, pch = 16, col = "grey30", xlab = "Time (ms)", ylab = "Residual (g)")
+abline(h = 0, lty = 2)
+region <- cut(x, c(0, 15, 40, 60))
+sds <- tapply(r, region, sd)
+sds
+sds["(15,40]"] / sds["(0,15]"]
+```
+
+The residual standard deviation is about 7 g before 15 ms, 26 g between 15 and 40 ms, and 14 g afterwards: the noise is strongly **heteroscedastic**. Consequences:
+
+- The single $\hat\sigma = 22.7$ g overstates the noise at the start and understates it in the middle, so constant-variance pointwise bands are too wide early and too narrow during the impact.
+- GCV and AIC weight all residuals equally, so the large residuals in the middle dominate the choice of $\lambda$; the flat early segment may be under-smoothed or over-smoothed relative to what its own noise level would justify.
+- Remedies (later in the course): weighted penalized least squares with weights $1/\hat\sigma^2(x)$ estimated from a smooth of the squared residuals, or a model for both the mean and the variance, e.g. `gam(list(accel ~ s(times), ~ s(times)), family = gaulss())` in `mgcv`.
+
+**Your turn.**
+
+11. Fit a smoothing spline to the squared residuals `r^2` against `times` and plot its square root. Where is the estimated $\sigma(x)$ largest?
+12. Write two sentences for a reader who sees the `mgcv` plot with its confidence band: what does the band get wrong here?
+
+## DELIVERABLE
+
+Open `tutorial.Rmd` in this folder and click **Run Document**. Answer the questions (the exercise boxes have the data, the basis `B`, the penalty `D` and the function `pspline()` already loaded), type your name, and download the `.txt` file. Upload the `.txt` to Blackboard **before the next session (Session 23)**. It counts toward *Intermediate tests*. One file per student, even if you worked in a pair.
+
+## Source
+
+`mcycle.csv` is `MASS::mcycle` written with `write.csv()`. Original reference: Silverman, B. W. (1985), Some aspects of the spline smoothing approach to non-parametric curve fitting, *Journal of the Royal Statistical Society, Series B*, 47, 1–52. See `data/SOURCE.txt`.

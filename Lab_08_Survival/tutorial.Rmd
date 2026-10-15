@@ -1,0 +1,227 @@
+---
+title: "Lab 08 — Survival analysis: Kaplan–Meier and Cox regression"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(tidyverse)
+library(survival)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+vet <- read_csv("data/veteran.csv", show_col_types = FALSE) %>%
+  mutate(
+    trt = factor(trt, levels = c("standard", "test")),
+    celltype = factor(celltype, levels = c("squamous", "smallcell", "adeno", "large")),
+    prior = factor(prior, levels = c("no", "yes"))
+  )
+fit_cox <- coxph(Surv(time, status) ~ trt + karno + celltype + age, data = vet)
+vet_split <- survSplit(Surv(time, status) ~ ., data = vet, cut = c(90, 180),
+                       episode = "tgroup", id = "id")
+lab_meta <- list(id = "lab08", title = "Survival analysis: Kaplan-Meier and Cox regression",
+                 open = c("q9", "q10"))
+lab_prompts <- c(
+  q1 = "Median survival (95% CI) in the standard and test arms is…",
+  q2 = "The log-rank test for treatment gives chi-square 0.008 (p = 0.93). The best reading is…",
+  q3 = "The exponential MLE of the death rate, with its standard error, is…",
+  q4 = "The exponential model and the Kaplan-Meier curve show that…",
+  q5 = "In the Cox model trt + karno + celltype + age, the hazard ratio per 10 Karnofsky points is…",
+  q6 = "The hazard ratio for adeno vs squamous is 3.25. This means…",
+  q7 = "Which statement about cox.zph(fit_cox) is correct?",
+  q8 = "With a separate karno coefficient for 0-90, 90-180 and >180 days, the hazard ratio per 10 points in the first 90 days is…",
+  q9 = "Why must censored patients be kept in the analysis, and how does Kaplan-Meier use them?",
+  q10 = "Interpretation memo (about 150 words): treatment, cell type and Karnofsky score, with estimates and 95% CIs."
+)
+```
+
+## What you will do
+
+Use the veteran lung cancer trial (`vet`, already loaded). Compute the numbers in the code boxes, then answer. Download the `.txt` at the end.
+
+## Kaplan–Meier and log-rank
+
+```{r km-ex, exercise=TRUE, exercise.lines=5}
+km_trt <- survfit(Surv(time, status) ~ trt, data = vet)
+km_trt
+survdiff(Surv(time, status) ~ trt, data = vet)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("103 days (59 to 132) for standard and 52.5 days (44 to 95) for test.", correct = TRUE),
+  answer("52.5 days (44 to 95) for standard and 103 days (59 to 132) for test."),
+  answer("124 days for standard and 136 days for test."),
+  answer("80 days in both arms."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("No evidence that the two survival curves differ; the curves cross, so early and late differences partly cancel.", correct = TRUE),
+  answer("The test treatment has been shown to be as good as the standard one."),
+  answer("The test treatment halves survival, because its median is half as long."),
+  answer("The test is invalid because 9 patients are censored."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Exponential model
+
+```{r exp-ex, exercise=TRUE, exercise.lines=6}
+d <- sum(vet$status)
+tot <- sum(vet$time)
+c(lambda = d / tot, se = d / tot / sqrt(d))
+fit_exp <- survreg(Surv(time, status) ~ 1, data = vet, dist = "exponential")
+exp(-coef(fit_exp))
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("0.00768 deaths per person-day, se 0.00068.", correct = TRUE),
+  answer("0.00822 deaths per person-day, se 0.00070."),
+  answer("0.00768 deaths per person-day, se 0.0884."),
+  answer("130 deaths per person-day, se 11.5."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("The exponential curve lies above Kaplan-Meier in the first months (median 90 vs 80 days) and the Weibull shape 0.85 < 1 points to a hazard that falls with time.", correct = TRUE),
+  answer("The exponential model fits perfectly because the likelihood ratio test against the Weibull is not significant."),
+  answer("The Weibull shape 0.85 < 1 points to a hazard that increases with time."),
+  answer("The exponential median, 130 days, equals the Kaplan-Meier median."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Cox regression
+
+```{r cox-ex, exercise=TRUE, exercise.lines=6}
+fit_cox <- coxph(Surv(time, status) ~ trt + karno + celltype + age, data = vet)
+round(cbind(HR = exp(coef(fit_cox)), exp(confint(fit_cox))), 3)
+exp(10 * coef(fit_cox)["karno"])
+exp(10 * confint(fit_cox)["karno", ])
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("0.72 (95% CI 0.65 to 0.80).", correct = TRUE),
+  answer("0.968 (95% CI 0.958 to 0.978)."),
+  answer("1.39 (95% CI 1.25 to 1.54)."),
+  answer("0.033 (95% CI 0.022 to 0.043)."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question(
+  lab_prompts[["q6"]],
+  answer("At any time since randomisation, an adeno-carcinoma patient alive at that time dies at about 3.25 times the rate of a squamous-cell patient with the same treatment, Karnofsky score and age.", correct = TRUE),
+  answer("Adeno-carcinoma patients live 3.25 times shorter than squamous-cell patients."),
+  answer("The probability of death is 3.25 times higher for adeno-carcinoma patients by the end of the study."),
+  answer("Adeno-carcinoma causes 3.25 times as many deaths as squamous-cell cancer in the population."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Proportional hazards
+
+```{r zph-ex, exercise=TRUE, exercise.lines=8}
+cox.zph(fit_cox)
+fit_step <- coxph(Surv(tstart, time, status) ~ trt + celltype + age + karno:strata(tgroup),
+                  data = vet_split)
+round(summary(fit_step)$coefficients, 4)
+exp(10 * coef(fit_step)[grep("karno", names(coef(fit_step)))])
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("karno (p = 0.0003) and celltype (p = 0.002) show evidence of non-proportional hazards; trt does not.", correct = TRUE),
+  answer("Only trt violates proportional hazards."),
+  answer("The global p-value of 5.6e-05 shows that the Cox model fits well."),
+  answer("No covariate violates proportional hazards at the 5% level."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("0.62, and close to 1 after 90 days: baseline fitness predicts early deaths.", correct = TRUE),
+  answer("0.72 in every period, as in the proportional hazards model."),
+  answer("1.07, and 0.62 after 90 days: fitness matters only late."),
+  answer("0.95, because the coefficient per point is -0.048."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Written answers
+
+```{r q9}
+question_text(
+  lab_prompts[["q9"]],
+  open_answer(),
+  placeholder = "A censored time tells us that...",
+  trim = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "Treatment: ... Cell type: ... Karnofsky score: ...",
+  trim = TRUE,
+  rows = 8
+)
+```
+
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

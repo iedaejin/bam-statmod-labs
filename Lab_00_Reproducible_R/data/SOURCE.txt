@@ -1,0 +1,20 @@
+File: nhtemp.csv (columns: year, temp)
+
+Source: the dataset nhtemp in the R package datasets (part of R; R 4.6.1).
+Average yearly temperatures in New Haven: the mean annual temperature in degrees
+Fahrenheit in New Haven, Connecticut, from 1912 to 1971. A time series of 60 observations.
+The file was written with
+  data(nhtemp)
+  write.csv(data.frame(year = as.numeric(time(nhtemp)), temp = as.numeric(nhtemp)),
+            "data/nhtemp.csv", row.names = FALSE)
+
+Original source, as given in ?nhtemp:
+  Vaux JE, Brinker NB (1972). "Cotton Acreage Harvested, U.S.A.: The 12-Year Cycle." Cycles, 6-7.
+  <https://cycles.org/cycles/library/>.
+References, as given in ?nhtemp:
+  McNeil D (1977). Interactive Data Analysis: A Practical Primer. John Wiley & Sons. ISBN 978-0471026310.
+
+License: the datasets package is part of R and is distributed under GPL-2 | GPL-3
+(GNU General Public License, version 2 or version 3).
+
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

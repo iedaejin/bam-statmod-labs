@@ -1,0 +1,227 @@
+---
+title: "Lab 04 — Mixed models in R"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(lme4)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+sleep <- read.csv("data/sleepstudy.csv")
+sleep$Subject <- factor(sleep$Subject)
+cbpp <- read.csv("data/cbpp.csv")
+cbpp$herd   <- factor(cbpp$herd)
+cbpp$period <- factor(cbpp$period)
+fit_cp  <- lm(Reaction ~ Days, data = sleep)
+fit_ri  <- lmer(Reaction ~ Days + (1 | Subject), data = sleep)
+fit_pp  <- lmer(Reaction ~ Days + (Days | Subject), data = sleep)
+fit_glm <- glm(cbind(incidence, size - incidence) ~ period, family = binomial, data = cbpp)
+fit_lap <- glmer(cbind(incidence, size - incidence) ~ period + (1 | herd),
+                 family = binomial, data = cbpp)
+lab_meta <- list(id = "lab04", title = "Mixed models in R", open = "q10")
+lab_prompts <- c(
+  q1  = "The ICC of the random-intercept model Reaction ~ Days + (1 | Subject) is about…",
+  q2  = "In Reaction ~ Days + (Days | Subject), the estimated SD of the random slopes is 5.92 ms/day. This means…",
+  q3  = "The standard error of the Days slope is 1.24 from lm() and 1.55 from lmer(). Which statement is right?",
+  q4  = "Which comparison must be made with ML fits (REML = FALSE)?",
+  q5  = "The LRT of (Days | Subject) against (1 | Subject) gives T = 42.8. The correct reference distribution is…",
+  q6  = "In the random-intercept model (n_i = 10 for every subject) the BLUP of each subject equals its raw deviation times…",
+  q7  = "After keeping only Days 0-1 for subjects 308, 309 and 310 and refitting the random-intercept model, the shrinkage factor for those subjects is about…",
+  q8  = "In the cbpp GLMM, exp(beta_period2) = 0.37. The right interpretation is…",
+  q9  = "Laplace (nAGQ = 1) gives sd_herd = 0.642 and nAGQ = 25 gives 0.648. What do you conclude?",
+  q10 = "In cbpp, the period-1 probability of a new case is 0.198 for a typical herd (b = 0) and 0.216 averaged over herds. Explain the difference and say which one you would report to a ministry planning vaccine supplies."
+)
+```
+
+## What you will do
+
+Fit linear mixed models to `sleepstudy` and a binomial GLMM to `cbpp`, then answer the questions. The data and the models `fit_cp`, `fit_ri`, `fit_pp`, `fit_glm` and `fit_lap` are already loaded in every exercise box. Then download the `.txt`.
+
+## Linear mixed models
+
+Compute the ICC of the random-intercept model.
+
+```{r icc-ex, exercise=TRUE, exercise.lines=4}
+vc <- as.data.frame(VarCorr(fit_ri))
+vc
+vc$vcov[1] / sum(vc$vcov)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("0.59: about 59% of the variance (given Days) is between subjects, and two measurements of the same subject have correlation 0.59.", correct = TRUE),
+  answer("0.41: the share of the variance that is within subjects is the ICC."),
+  answer("0.07: the correlation between intercepts and slopes."),
+  answer("0.94: the shrinkage factor of the BLUPs."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("Subjects differ in how fast they deteriorate: about 95% have a slope between roughly -1 and 22 ms per day.", correct = TRUE),
+  answer("The average slope 10.47 is estimated with standard error 5.92."),
+  answer("Reaction times scatter with SD 5.92 ms around each subject's own line."),
+  answer("Each subject's own lm() slope has standard error 5.92."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("1.55 is right: lm() treats 180 correlated rows as independent, and ignores that slopes vary between the 18 subjects.", correct = TRUE),
+  answer("1.24 is right: lm() uses all 180 observations, so it is more efficient."),
+  answer("Both are right: the point estimates are equal, so the standard errors do not matter."),
+  answer("1.55 is right because REML always gives larger standard errors than least squares."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+Test the random slope against the random-intercept model.
+
+```{r slope-ex, exercise=TRUE, exercise.lines=6}
+a <- anova(fit_ri, fit_pp, refit = FALSE)
+a
+T <- a$Chisq[2]
+0.5 * pchisq(T, 1, lower.tail = FALSE) + 0.5 * pchisq(T, 2, lower.tail = FALSE)
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("Reaction ~ Days + (Days | Subject) against Reaction ~ 1 + (Days | Subject).", correct = TRUE),
+  answer("Reaction ~ Days + (1 | Subject) against Reaction ~ Days + (Days | Subject)."),
+  answer("Reaction ~ Days + (Days || Subject) against Reaction ~ Days + (Days | Subject)."),
+  answer("None: REML likelihoods can always be compared."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("A 50:50 mixture of chi-square(1) and chi-square(2), because the slope variance is 0 on the boundary under H0; p is about 3e-10.", correct = TRUE),
+  answer("Chi-square with 2 df, as for any LRT with two extra parameters."),
+  answer("Chi-square with 1 df, because only one variance is added."),
+  answer("No test is possible because the models were fitted with REML."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question(
+  lab_prompts[["q6"]],
+  answer("k = 10 sigma_b^2 / (10 sigma_b^2 + sigma^2) = 0.935.", correct = TRUE),
+  answer("k = sigma_b^2 / (sigma_b^2 + sigma^2) = 0.589, the ICC."),
+  answer("k = 1: BLUPs equal the raw deviations when the design is balanced."),
+  answer("k = sigma^2 / (10 sigma_b^2 + sigma^2) = 0.065."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+Refit the random-intercept model with only two observations for three subjects.
+
+```{r shrink-ex, exercise=TRUE, exercise.lines=7}
+s2 <- subset(sleep, !(Subject %in% c("308", "309", "310")) | Days <= 1)
+r2 <- lmer(Reaction ~ Days + (1 | Subject), data = s2)
+v  <- as.data.frame(VarCorr(r2))$vcov
+c(k_2 = 2 * v[1] / (2 * v[1] + v[2]), k_10 = 10 * v[1] / (10 * v[1] + v[2]))
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("0.65, against 0.90 for the subjects with ten observations: fewer observations, stronger shrinkage.", correct = TRUE),
+  answer("0.90, the same as for the other subjects: the shrinkage factor does not depend on n_i."),
+  answer("0.25: with two observations the BLUP is almost zero."),
+  answer("1.00: subjects with few observations are not shrunk."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## A binomial GLMM
+
+```{r glmm-ex, exercise=TRUE, exercise.lines=6}
+exp(fixef(fit_lap))
+fit_agq <- update(fit_lap, nAGQ = 25)
+c(laplace = attr(VarCorr(fit_lap)$herd, "stddev"),
+  agq25   = attr(VarCorr(fit_agq)$herd, "stddev"))
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("For a given herd, the odds of a new case in period 2 are 0.37 times the odds in period 1.", correct = TRUE),
+  answer("Across all herds, the proportion of new cases in period 2 is 37% of that in period 1."),
+  answer("The probability of a new case in period 2 is 0.37."),
+  answer("Herds differ in their odds by a factor 0.37."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q9}
+question(
+  lab_prompts[["q9"]],
+  answer("The Laplace approximation is accurate for these data; quadrature changes the estimates only in the third decimal.", correct = TRUE),
+  answer("Laplace is wrong: always use the largest nAGQ and compare logLik values across nAGQ."),
+  answer("The herd variance is not significant because the two values differ."),
+  answer("nAGQ = 25 gives the REML estimate."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "The GLMM coefficients are conditional on the herd…",
+  trim = TRUE
+)
+```
+
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

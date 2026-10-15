@@ -1,0 +1,303 @@
+---
+title: "Lab 03 — Generalized linear models in R"
+subtitle: "Sessions 9–12: Logistic and Poisson regression, deviance, overdispersion"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+In this lab you will:
+
+- fit a logistic regression with `glm()` and read its coefficients as odds ratios, with profile-likelihood intervals;
+- test a block of predictors with a likelihood-ratio (deviance) test;
+- turn fitted probabilities into decisions: choose a threshold on training data and evaluate it once on held-out data;
+- fit a Poisson regression for a rate, with an offset, and read rate ratios;
+- check a count model for overdispersion and compare quasi-Poisson and negative binomial remedies;
+- diagnose a GLM with Pearson, deviance and randomized quantile residuals.
+
+Work in pairs. Plan for 60–75 minutes. Notation follows the slides: $g(\mu)=\eta=X\beta$, $V(\mu)$ is the variance function, $D$ the deviance, $X^2$ the Pearson statistic, $\hat\phi=X^2/(n-p)$, and $k$ the negative binomial size (R calls it `theta`; in this course $\theta$ is the canonical parameter).
+
+## Setup
+
+Open the project for this lab so that the working directory is the lab folder. The two data files are in `data/`; see `data/SOURCE.txt` for their origin.
+
+```{r}
+library(MASS)          # glm.nb()
+bw    <- read.csv("data/birthwt.csv")
+ships <- read.csv("data/ships.csv")
+str(bw)
+str(ships)
+```
+
+`birthwt` has 189 births at Baystate Medical Center (Springfield, Massachusetts, 1986). `low` is 1 when the baby weighed less than 2.5 kg. The covariates are the mother's `age` (years), weight `lwt` at her last menstrual period (pounds), `race`, smoking during pregnancy (`smoke`), number of previous premature labours (`ptl`), history of hypertension (`ht`), uterine irritability (`ui`) and number of physician visits in the first trimester (`ftv`). `bwt` is the birth weight in grams; we do not use it as a predictor, because `low` is defined from it.
+
+`ships` has 40 cells of cargo ships: `type` (A–E), year of construction (`year`: 60 = 1960–64, ..., 75 = 1975–79), period of operation (`period`: 60 = 1960–74, 75 = 1975–79), aggregate months of `service`, and the number of damage `incidents`.
+
+## Logistic regression for low birth weight
+
+Most mothers had no previous premature labour, so we use the indicator `ptd` = 1 if `ptl` > 0. White is the reference level for race.
+
+```{r}
+bw$race <- factor(bw$race, levels = c("white", "black", "other"))
+bw$ptd  <- as.integer(bw$ptl > 0)
+table(bw$low)
+fit <- glm(low ~ age + lwt + race + smoke + ptd + ht + ui,
+           family = binomial, data = bw)
+summary(fit)
+```
+
+The model is $\mathrm{logit}\,P(\text{low}_i=1)=x_i^\top\beta$. Each coefficient is a difference in **log odds** between two mothers who differ by one unit in that covariate and are equal in all the others. The `z value` column is the Wald statistic $\hat\beta_j/\mathrm{se}(\hat\beta_j)$. The residual deviance (196.83 on 180 df) is $-2\ell(\hat\beta)$ here, because for 0/1 data the saturated model has log-likelihood 0; on its own it says nothing about fit (Session 10).
+
+A linear probability model would not respect the range of a probability:
+
+```{r}
+lpm <- lm(low ~ age + lwt + race + smoke + ptd + ht + ui, data = bw)
+sum(fitted(lpm) < 0)
+range(fitted(fit))
+```
+
+The logistic fitted values stay in $(0,1)$ because the inverse link $g^{-1}(\eta)=e^\eta/(1+e^\eta)$ maps every real $\eta$ into $(0,1)$.
+
+**Your turn.**
+
+1. Compute the fitted probability for a 25-year-old white mother weighing 120 lb, non-smoker, with no premature labour, hypertension or uterine irritability. Repeat for a smoker. Use `predict(fit, newdata, type = "response")` and check one value by hand with `plogis()`.
+2. Compute the ratio of the two probabilities and the ratio of the two odds. Which one equals $e^{\hat\beta_{\text{smoke}}}$?
+
+## Odds ratios and their intervals
+
+```{r}
+or_tab <- exp(cbind(OR = coef(fit), confint(fit)))
+round(or_tab, 3)
+```
+
+`confint()` on a `glm` profiles the likelihood: the interval is the set of $\beta_j$ values not rejected by a likelihood-ratio test, mapped to the odds-ratio scale. The Wald interval $\exp\{\hat\beta_j\pm1.96\,\mathrm{se}(\hat\beta_j)\}$ assumes a quadratic log-likelihood:
+
+```{r}
+se <- sqrt(diag(vcov(fit)))
+wald <- exp(cbind(coef(fit) - qnorm(0.975) * se, coef(fit) + qnorm(0.975) * se))
+round(cbind(profile = or_tab[, 2:3], wald = wald)["ht", ], 3)
+sum(bw$ht)
+```
+
+Only 12 mothers had hypertension, so the log-likelihood in $\beta_{\text{ht}}$ is skewed and the two intervals differ. Prefer the profile interval.
+
+A coefficient per pound is hard to read. For 10 lb, the odds ratio is $e^{10\hat\beta_{\text{lwt}}}$, and the interval endpoints are transformed the same way:
+
+```{r}
+exp(10 * c(estimate = coef(fit)[["lwt"]], confint(fit)["lwt", ]))
+```
+
+**Your turn.**
+
+3. Write one sentence interpreting the odds ratio for `smoke`, with its 95% interval, in the language of the study (mothers, odds, low birth weight). Do not use causal verbs: this is an observational study.
+4. Why is "smokers are 2.3 times as likely to have a low-birth-weight baby" wrong? Use your answer to task 2.
+5. Compute the odds ratio comparing black mothers with mothers of "other" race. (Hint: relevel `race`, or use the difference of coefficients.)
+
+## Testing a block of predictors
+
+`ptd`, `ht` and `ui` describe the mother's medical history. Is the history needed once age, weight, race and smoking are in the model? The models are nested, so the likelihood-ratio statistic is the difference of residual deviances:
+
+```{r}
+fit_nohist <- update(fit, . ~ . - ptd - ht - ui)
+anova(fit_nohist, fit, test = "Chisq")
+```
+
+By hand:
+
+```{r}
+LR <- deviance(fit_nohist) - deviance(fit)
+df <- df.residual(fit_nohist) - df.residual(fit)
+c(LR = LR, df = df, p = pchisq(LR, df, lower.tail = FALSE))
+c(AIC_without = AIC(fit_nohist), AIC_with = AIC(fit))
+```
+
+One test for the block is the right tool. Three separate Wald tests ask three different questions, and they do not control the error rate of the joint question.
+
+**Your turn.**
+
+6. Test whether `race` (two dummy variables) is needed, with an LR test. Report the statistic, df and $p$-value.
+7. `drop1(fit, test = "Chisq")` gives one LR test per term. Compare its $p$-value for `smoke` with the Wald $p$-value in `summary(fit)`. Are they close? Why might they differ?
+
+## From probabilities to decisions on held-out data
+
+Suppose the model is used to flag pregnancies for an extra visit. We split the births into a training set (two thirds, used to fit the model **and** to choose the threshold) and a test set (one third, used once to evaluate). The split is stratified, so both sets have about the same share of low birth weights.
+
+```{r}
+set.seed(2027)
+train_id <- c(sample(which(bw$low == 1), 39), sample(which(bw$low == 0), 87))
+train <- bw[train_id, ]
+test  <- bw[-train_id, ]
+c(n_train = nrow(train), lows_train = sum(train$low),
+  n_test = nrow(test), lows_test = sum(test$low))
+fit_tr <- glm(low ~ age + lwt + race + smoke + ptd + ht + ui,
+              family = binomial, data = train)
+p_tr <- fitted(fit_tr)
+p_te <- predict(fit_tr, newdata = test, type = "response")
+```
+
+Sensitivity is the share of low-birth-weight babies that are flagged, TP/(TP+FN). Specificity is the share of normal-weight babies that are not flagged, TN/(TN+FP): high specificity means few **false positives**.
+
+```{r}
+rates <- function(p, y, cut) {
+  yhat <- as.integer(p >= cut)
+  c(sens = mean(yhat[y == 1] == 1), spec = mean(yhat[y == 0] == 0),
+    acc = mean(yhat == y))
+}
+rates(p_te, test$low, 0.5)
+```
+
+At 0.5 the model flags few babies: most low-birth-weight babies are missed. Two principled ways to choose the threshold, both using **training data only**:
+
+- **Costs.** If missing a low-birth-weight baby costs $C_{FN}$ and an unnecessary visit costs $C_{FP}$, and the probabilities are calibrated, flag when $p>c^*=C_{FP}/(C_{FP}+C_{FN})$. This holds whatever the prevalence. With $C_{FN}=3\,C_{FP}$, $c^*=0.25$.
+- **Youden's index.** Maximise sensitivity + specificity − 1 over the training data.
+
+```{r}
+cuts <- seq(0.05, 0.95, by = 0.01)
+J_train <- sapply(cuts, function(k) sum(rates(p_tr, train$low, k)[1:2]) - 1)
+c_youden <- cuts[which.max(J_train)]
+c_star <- 1 / (1 + 3)
+c(c_youden = c_youden, c_star = c_star)
+rates(p_tr, train$low, c_youden)          # on the data used to choose it
+rbind(half   = rates(p_te, test$low, 0.5),
+      youden = rates(p_te, test$low, c_youden),
+      cost   = rates(p_te, test$low, c_star))
+table(predicted = as.integer(p_te >= c_star), observed = test$low)
+```
+
+Compare the Youden row on the training data with the same threshold on the test data. The drop is the optimism of evaluating on the data used for fitting and tuning. With 63 test births (20 of them low), test estimates are also noisy: one baby moves sensitivity by 0.05.
+
+**Your turn.**
+
+8. Compute the total test-set cost $\sum(C_{FP}\cdot\text{FP}+C_{FN}\cdot\text{FN})$ with $C_{FP}=1$, $C_{FN}=3$ for the thresholds 0.5, `c_youden` and $c^*$. Which threshold does best?
+9. Find the threshold that maximises Youden's index **on the test set**, and the test sensitivity and specificity it gives. Explain in two sentences why these numbers cannot be reported as the performance of the classifier.
+10. What would $c^*$ be if a missed case cost 5 times a false alarm? Would you expect sensitivity to go up or down?
+
+## Poisson regression for ship incidents
+
+Six cells have no months of service. They cannot have incidents and tell us nothing about a rate, so we drop them. `year` and `period` are codes, not quantities: we treat them as factors.
+
+```{r}
+sh <- subset(ships, service > 0)
+sh$type   <- factor(sh$type)
+sh$year   <- factor(sh$year)
+sh$period <- factor(sh$period)
+nrow(sh)
+fit_p <- glm(incidents ~ type + year + period + offset(log(service)),
+             family = poisson, data = sh)
+summary(fit_p)
+```
+
+The model is $\log\mu_i=\log(\text{service}_i)+x_i^\top\beta$, i.e. the incident **rate** per month of service is $\exp(x_i^\top\beta)$. The offset has its coefficient fixed at 1: twice the service, twice the expected count.
+
+```{r}
+round(exp(cbind(RR = coef(fit_p), confint(fit_p))), 3)
+```
+
+**Your turn.**
+
+11. Interpret the rate ratio for `period` 75 vs 60 in one sentence, with its interval.
+12. Compute by hand (from `coef(fit_p)`) the expected number of incidents for a type C ship built in 1970–74, operating in 1975–79, with 2000 months of service. Check with `predict(..., type = "response")`.
+13. Refit with `log(service)` as an ordinary covariate (no offset). Is its coefficient compatible with 1? Use the Wald test.
+
+## Overdispersion: detect and compare remedies
+
+A Poisson model forces $\mathrm{Var}(Y_i)=\mu_i$. Two quick checks: the Pearson dispersion estimate, and the deviance goodness-of-fit test. The $\chi^2_{n-p}$ reference for the deviance needs large fitted means; here 10 of the 34 fitted means are below 1, so treat its $p$-value as indicative only.
+
+```{r}
+X2 <- sum(residuals(fit_p, type = "pearson")^2)
+c(X2 = X2, D = deviance(fit_p), df = df.residual(fit_p),
+  phi_hat = X2 / df.residual(fit_p),
+  p_deviance = pchisq(deviance(fit_p), df.residual(fit_p), lower.tail = FALSE))
+```
+
+$\hat\phi=1.69$ and the deviance test gives $p=0.04$: mild overdispersion. A formal test (Cameron and Trivedi) regresses $\{(y_i-\hat\mu_i)^2-y_i\}/\hat\mu_i$ on a function of $\hat\mu_i$. Under $\mathrm{Var}(Y)=\mu+\alpha\mu^2$ (negative binomial shape) the regressor is $\hat\mu_i$ without intercept; under $\mathrm{Var}(Y)=(1+\alpha)\mu$ (quasi-Poisson shape) it is a constant.
+
+```{r}
+y  <- sh$incidents
+mu <- fitted(fit_p)
+ct_quadratic <- lm(((y - mu)^2 - y) / mu ~ 0 + mu)
+ct_linear    <- lm(((y - mu)^2 - y) / mu ~ 1)
+rbind(quadratic = summary(ct_quadratic)$coefficients[1, ],
+      linear    = summary(ct_linear)$coefficients[1, ])
+```
+
+Neither test rejects at 5% with only 34 cells, but the two shapes disagree: the quadratic $\hat\alpha$ is slightly negative, the linear one positive. Now fit the two remedies.
+
+```{r}
+fit_q  <- glm(incidents ~ type + year + period + offset(log(service)),
+              family = quasipoisson, data = sh)
+fit_nb <- glm.nb(incidents ~ type + year + period + offset(log(service)), data = sh)
+c(phi_quasi = summary(fit_q)$dispersion, k_nb = fit_nb$theta)
+round(cbind(est = coef(fit_p),
+            se_poisson = sqrt(diag(vcov(fit_p))),
+            se_quasi   = sqrt(diag(vcov(fit_q))),
+            se_negbin  = sqrt(diag(vcov(fit_nb)))), 3)
+AIC(fit_p, fit_nb)
+```
+
+`glm.nb` warns that its iteration limit was reached: $\hat k$ runs off to a huge value. As $k\to\infty$ the negative binomial becomes the Poisson, so the NB fit is the Poisson fit, its standard errors are the Poisson ones, and its AIC is 2 larger (one extra parameter). The extra variance in these data is not of the $\mu^2/k$ form. The quasi-Poisson model keeps the Poisson estimates and inflates every standard error by $\sqrt{\hat\phi}=1.30$. With $\phi$ estimated, compare nested models with an $F$ test:
+
+```{r}
+anova(update(fit_q, . ~ . - period), fit_q, test = "F")
+```
+
+**Your turn.**
+
+14. Compare the $p$-value for `period` from the Poisson LR test (`drop1(fit_p, test = "Chisq")`) with the quasi-Poisson $F$ test. Does the conclusion change?
+15. Which model would you report for `ships`, and why? Mention $\hat\phi$, $\hat k$ and what each remedy assumes about $\mathrm{Var}(Y)$.
+16. Compute the expected number of zero counts under the Poisson fit, $\sum_i P(Y_i=0\mid\hat\mu_i)$, and compare it with the observed number of zeros. Is there an excess of zeros?
+
+## Residual diagnostics
+
+Pearson residuals $r^P_i=(y_i-\hat\mu_i)/\sqrt{\hat\mu_i}$ and deviance residuals $r^D_i=\mathrm{sign}(y_i-\hat\mu_i)\sqrt{d_i}$ are discrete for count data. Randomized quantile residuals remove the discreteness: draw $u_i$ uniformly between $F(y_i-1)$ and $F(y_i)$ under the fitted Poisson CDF $F$, and set $r^Q_i=\Phi^{-1}(u_i)$. If the model is right they are exactly $N(0,1)$.
+
+```{r}
+rqr <- function(y, F, ...) {
+  lo <- F(y - 1, ...); hi <- F(y, ...); u <- runif(length(y))
+  up_lo <- F(y, ..., lower.tail = FALSE); up_hi <- F(y - 1, ..., lower.tail = FALSE)
+  ifelse(lo < 0.5, qnorm(lo + u * (hi - lo)),
+         qnorm(up_lo + u * (up_hi - up_lo), lower.tail = FALSE))
+}
+set.seed(2027)
+r_P <- residuals(fit_p, type = "pearson")
+r_Q <- rqr(y, ppois, lambda = mu)
+op <- par(mfrow = c(1, 3))
+plot(log(mu), r_P, xlab = "log fitted mean", ylab = "Pearson residual"); abline(h = 0, lty = 2)
+plot(log(mu), r_Q, xlab = "log fitted mean", ylab = "randomized quantile residual")
+abline(h = c(-2, 0, 2), lty = c(3, 2, 3))
+qqnorm(r_Q, main = "Randomized quantile residuals"); qqline(r_Q)
+par(op)
+```
+
+Large residuals and influential cells:
+
+```{r}
+sh[which.max(abs(r_P)), ]
+round(c(fitted = mu[which.max(abs(r_P))], pearson = max(abs(r_P))), 2)
+cd <- cooks.distance(fit_p)
+sh[order(cd, decreasing = TRUE)[1:3], ]
+round(sort(cd, decreasing = TRUE)[1:3], 3)
+```
+
+**Your turn.**
+
+17. Describe the residual plots in two or three sentences: any trend in the mean, any change in spread, any outliers?
+18. The largest Pearson residual is for a type C ship built in 1970–74 in the first period: 6 incidents where the model expects about 1.5. Refit the Poisson model without that cell. Do the rate ratios for `type` change much?
+
+## Summary
+
+```{r}
+sessionInfo()
+```
+
+In `birthwt`, smoking, the mother's weight, race and her medical history are associated with low birth weight; the medical-history block is clearly needed (LR test). A threshold chosen on training data from costs performs better on new births than the default 0.5, but performance on held-out data is lower than on the training data. In `ships`, the incident rate depends on ship type, construction year and period of operation; the mild overdispersion is better handled by quasi-Poisson than by a negative binomial, whose quadratic variance does not fit these data.
+
+## DELIVERABLE
+
+Open `tutorial.Rmd` in this folder and click **Run Document**. Answer the questions (the exercise boxes have the data and models already loaded), type your name, and download the `.txt` file. Upload the `.txt` to Blackboard **before the next session**. It counts toward *Intermediate tests*. One file per student, even if you worked in a pair.

@@ -1,0 +1,238 @@
+---
+title: "Lab 01 — Maximum likelihood in R"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(tidyverse)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+disc   <- read_csv("data/discoveries.csv", show_col_types = FALSE)
+geyser <- read_csv("data/geyser.csv", show_col_types = FALSE)
+y <- disc$count
+n <- length(y)
+w <- geyser$waiting
+loglik_pois <- function(lambda) sum(dpois(y, lambda, log = TRUE))
+nll_gamma <- function(par)
+  -sum(dgamma(w, shape = exp(par[1]), rate = exp(par[2]), log = TRUE))
+nll_mix <- function(par, y) {
+  p  <- plogis(par[1])
+  s1 <- exp(par[4]); s2 <- exp(par[5])
+  -sum(log(p * dnorm(y, par[2], s1) + (1 - p) * dnorm(y, par[3], s2)))
+}
+show_fit <- function(fit) {
+  round(c(p = plogis(fit$par[1]), mu1 = fit$par[2], mu2 = fit$par[3],
+          sigma1 = exp(fit$par[4]), sigma2 = exp(fit$par[5]),
+          loglik = -fit$value, convergence = fit$convergence), 3)
+}
+lab_meta <- list(id = "lab01", title = "Maximum likelihood in R", open = c("q4", "q10"))
+lab_prompts <- c(
+  q1  = "For the Poisson model of the discoveries, the MLE and its standard error are…",
+  q2  = "The 95% Wald and likelihood-ratio intervals for lambda are…",
+  q3  = "The sample variance of the counts is about 5.08 and the mean is 3.1. This means…",
+  q4  = "Where does the Poisson model miss in the table of observed and expected counts, and what does that do to the standard error of lambda-hat?",
+  q5  = "The gamma MLE of the shape alpha for the Old Faithful waiting times is about…",
+  q6  = "The LR test of the exponential (alpha = 1) against the gamma gives…",
+  q7  = "From the start (0, 55, 80, log 5, log 5) the mixture fit gives…",
+  q8  = "From the swapped start (0, 80, 55, log 5, log 5) you get p = 0.692 and the same log-likelihood. Why?",
+  q9  = "From the symmetric start (mu1 = mu2, sigma1 = sigma2) optim() reports convergence = 0 with log-likelihood -1210.49. What happened?",
+  q10 = "One random start reaches log-likelihood -1136.9 with sigma2 close to 0. Why is the mixture likelihood unbounded, and which fit do you report?"
+)
+```
+
+## What you will do
+
+Check the numbers from the lab, then answer the questions. The data are already loaded: `y` holds the 100 yearly discovery counts and `w` the 299 Old Faithful waiting times. Finish by downloading the `.txt` file.
+
+## Poisson model for the discoveries
+
+Maximise the Poisson log-likelihood on the log scale. The Hessian is then the information for $\log\lambda$; the delta method gives $\mathrm{se}(\hat\lambda)=\hat\lambda\,\mathrm{se}(\log\hat\lambda)$.
+
+```{r pois-ex, exercise=TRUE, exercise.lines=6}
+fit <- optim(0, function(theta) -loglik_pois(exp(theta)),
+             method = "BFGS", hessian = TRUE)
+lambda_hat <- exp(fit$par)
+se_log <- 1 / sqrt(fit$hessian)
+c(lambda_hat = lambda_hat, se = lambda_hat * se_log)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("3.10 and 0.176", correct = TRUE),
+  answer("3.10 and 0.057"),
+  answer("3.10 and 0.031"),
+  answer("5.08 and 0.225"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+Compute both intervals. The likelihood interval keeps every $\lambda$ with $\ell(\lambda)\ge\ell(\hat\lambda)-1.92$.
+
+```{r ci-ex, exercise=TRUE, exercise.lines=8}
+lambda_hat <- mean(y)
+se_hat <- sqrt(lambda_hat / n)
+cut <- qchisq(0.95, df = 1) / 2
+f <- function(lambda) loglik_pois(lambda) - loglik_pois(lambda_hat) + cut
+lr_ci <- c(uniroot(f, c(1, lambda_hat))$root, uniroot(f, c(lambda_hat, 6))$root)
+round(rbind(Wald = lambda_hat + c(-1, 1) * 1.96 * se_hat, LR = lr_ci), 3)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("Wald (2.755, 3.445) and LR (2.768, 3.458): close, with the LR interval shifted slightly to the right.", correct = TRUE),
+  answer("Wald (2.768, 3.458) and LR (2.755, 3.445): the LR interval is the symmetric one."),
+  answer("Both are (2.755, 3.445), because the likelihood interval is always symmetric."),
+  answer("Wald (2.990, 3.210) and LR (2.985, 3.215)."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("The counts vary more than a Poisson model allows (ratio about 1.64), so the Poisson standard error is too optimistic.", correct = TRUE),
+  answer("The counts vary less than a Poisson model allows, so the standard error is too large."),
+  answer("Nothing: the Poisson model only restricts the mean, not the variance."),
+  answer("The MLE of lambda should be the variance, 5.08, instead of the mean."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q4}
+question_text(
+  lab_prompts[["q4"]],
+  open_answer(),
+  placeholder = "Compare observed and expected counts at 0 and at 7 or more...",
+  trim = TRUE
+)
+```
+
+## Exponential or gamma?
+
+```{r gamma-ex, exercise=TRUE, exercise.lines=8}
+fit_g <- optim(c(0, log(1 / mean(w))), nll_gamma, method = "BFGS")
+ll_gamma <- -fit_g$value
+ll_exp <- sum(dexp(w, rate = 1 / mean(w), log = TRUE))
+LR <- 2 * (ll_gamma - ll_exp)
+c(alpha_hat = exp(fit_g$par[1]), ll_exp = ll_exp, ll_gamma = ll_gamma, LR = LR)
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("25.2", correct = TRUE),
+  answer("1.0"),
+  answer("0.35"),
+  answer("72.3"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question(
+  lab_prompts[["q6"]],
+  answer("LR of about 722.5 on 1 df: the exponential model is rejected decisively.", correct = TRUE),
+  answer("LR of about 1.1 on 1 df: no evidence against the exponential model."),
+  answer("LR of about 722.5 on 2 df: the gamma model is rejected."),
+  answer("LR of about -722.5: the exponential fits better."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## A two-component mixture
+
+Try different starting values here. The parameters are $(\mathrm{logit}\,p,\ \mu_1,\ \mu_2,\ \log\sigma_1,\ \log\sigma_2)$.
+
+```{r mix-ex, exercise=TRUE, exercise.lines=6}
+start <- c(0, 55, 80, log(5), log(5))
+fit <- optim(start, nll_mix, y = w, method = "BFGS", hessian = TRUE)
+show_fit(fit)
+eigen(fit$hessian)$values
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("p = 0.31, means 54.2 and 80.4 minutes, log-likelihood -1157.5", correct = TRUE),
+  answer("p = 0.50, means 72.3 and 72.3 minutes, log-likelihood -1210.5"),
+  answer("p = 0.31, means 54.2 and 80.4 minutes, log-likelihood -1217.8"),
+  answer("p = 0.69, means 80.4 and 54.2 minutes, log-likelihood -1136.9"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("Label switching: the components swap names and p becomes 1 - p, which describes the same distribution.", correct = TRUE),
+  answer("The second start found a different local maximum with a different fitted density."),
+  answer("optim() failed to converge from the second start."),
+  answer("The model is wrong, because a correct model has a unique parameter vector."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q9}
+question(
+  lab_prompts[["q9"]],
+  answer("The two components stay identical, so the fit is a single normal: a saddle point where p is not identified, not the MLE.", correct = TRUE),
+  answer("optim() found the global maximum; the single normal is the best model."),
+  answer("The likelihood is unbounded, so optim() stopped at an arbitrary point."),
+  answer("convergence = 0 guarantees the maximum, so the two-component fit from the first start must be wrong."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "Think about ties in the data and a component with sigma close to 0...",
+  trim = TRUE
+)
+```
+
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

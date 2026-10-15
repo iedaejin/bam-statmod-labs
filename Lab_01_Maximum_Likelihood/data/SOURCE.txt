@@ -1,0 +1,22 @@
+discoveries.csv
+  Source: R package 'datasets' (R Core Team), object 'discoveries': the numbers of "great"
+  inventions and scientific discoveries in each year from 1860 to 1959.
+  Original source: The World Almanac and Book of Facts, 1975 Edition, pages 315-318.
+  Reference: McNeil, D. (1977) Interactive Data Analysis: A Practical Primer. John Wiley & Sons.
+  Columns: year (1860-1959), count (number of discoveries). Values unchanged; written with
+  write.csv(data.frame(year = time(discoveries), count = discoveries), row.names = FALSE).
+  License: the 'datasets' package is part of R, GNU General Public License, version 2 or 3 (GPL-2 | GPL-3).
+
+geyser.csv
+  Source: R package 'MASS' (Venables and Ripley), version 7.3-66, object 'geyser': 299 eruptions of
+  the Old Faithful geyser, Yellowstone National Park, continuous measurement from 1 to 15 August 1985.
+  Columns: waiting (waiting time for this eruption, minutes), duration (eruption time, minutes).
+  Some nocturnal durations were coded as 2, 3 or 4 minutes (originally 'short', 'medium', 'long').
+  MASS 7.3-30 corrected the description of 'waiting' (it is the waiting time for this eruption).
+  References: Azzalini, A. and Bowman, A. W. (1990) A look at some data on the Old Faithful geyser.
+  Applied Statistics 39, 357-365. Venables, W. N. and Ripley, B. D. (2002) Modern Applied Statistics
+  with S. Fourth edition. Springer.
+  Values unchanged; written with write.csv(MASS::geyser[, c("waiting", "duration")], row.names = FALSE).
+  License: MASS is distributed under the GNU General Public License, version 2 or 3 (GPL-2 | GPL-3).
+
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

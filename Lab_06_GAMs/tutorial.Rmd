@@ -1,0 +1,227 @@
+---
+title: "Lab 06 — Generalized Additive Models with mgcv"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(mgcv)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+aq_all <- read.csv("data/airquality.csv")
+aq_all$day <- seq_len(nrow(aq_all))
+aq <- na.omit(aq_all)
+m_log <- gam(log(Ozone) ~ s(Solar.R) + s(Wind) + s(Temp), data = aq, method = "REML")
+m_gamma <- gam(Ozone ~ s(Solar.R) + s(Wind) + s(Temp),
+               family = Gamma(link = "log"), data = aq, method = "REML")
+m_te <- gam(log(Ozone) ~ s(Solar.R) + te(Temp, Wind), data = aq, method = "REML")
+m_ti <- gam(log(Ozone) ~ s(Solar.R) + s(Wind) + s(Temp) + ti(Temp, Wind),
+            data = aq, method = "REML")
+lab_meta <- list(id = "lab06", title = "Generalized Additive Models with mgcv",
+                 open = c("q9", "q10"))
+lab_prompts <- c(
+  q1 = "How many complete days are used to model log(Ozone) from Solar.R, Wind and Temp?",
+  q2 = "On the Ozone scale, which model has the lowest AIC?",
+  q3 = "With method = \"REML\", the edf of s(Temp) is about…",
+  q4 = "If you leave out the method argument, gam() uses…",
+  q5 = "Doubling k for s(Wind) leaves its edf and k-index almost unchanged. This means…",
+  q6 = "The largest 'worst' concurvity in the additive model is about…",
+  q7 = "Which model has the lowest AIC: lm, additive GAM, te(Temp, Wind) or s + s + ti?",
+  q8 = "The interaction model gives a ratio of median ozone of 3.58 (95% CI 2.32 to 5.54) for Temp 90 vs 70 °F at Wind 10 mph. Which sentence is correct?",
+  q9 = "In the ti model, s(Wind) has p = 0.15 while ti(Temp, Wind) has p < 0.001. Does wind matter? Explain in two or three sentences.",
+  q10 = "Interpretation memo (120-180 words) for the city environment office."
+)
+```
+
+## What you will do
+
+Work through `lab.qmd` first. Then use the code boxes here to check your numbers, answer the questions, and download the `.txt`.
+
+The data are already loaded as `aq` (111 complete days). The fitted models `m_log`, `m_gamma`, `m_te` and `m_ti` are available.
+
+```{r explore-ex, exercise=TRUE, exercise.lines=4}
+nrow(aq)
+summary(m_log)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("111", correct = TRUE),
+  answer("153"),
+  answer("116"),
+  answer("146"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Response scale and family
+
+```{r aic-ex, exercise=TRUE, exercise.lines=5}
+m_ident <- gam(Ozone ~ s(Solar.R) + s(Wind) + s(Temp), data = aq, method = "REML")
+c(gaussian_identity = AIC(m_ident),
+  gaussian_log_y    = AIC(m_log) + 2 * sum(log(aq$Ozone)),
+  gamma_log_link    = AIC(m_gamma))
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("The Gamma GAM with log link (AIC about 918).", correct = TRUE),
+  answer("The Gaussian GAM for log(Ozone), because its AIC is 166, far below 918."),
+  answer("The Gaussian GAM with identity link (AIC about 968)."),
+  answer("They cannot be compared in any way."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Smoothing parameters and k
+
+```{r edf-ex, exercise=TRUE, exercise.lines=5}
+m_gcv <- gam(log(Ozone) ~ s(Solar.R) + s(Wind) + s(Temp), data = aq)
+round(cbind(REML = summary(m_log)$edf, GCV = summary(m_gcv)$edf), 2)
+m_gcv$method
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("1.95: close to a straight line on the log scale.", correct = TRUE),
+  answer("4.49: a clearly wiggly curve."),
+  answer("9: the maximum allowed by k = 10."),
+  answer("1.00: exactly linear."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("GCV (method = \"GCV.Cp\"), which here gives s(Temp) more than twice the edf of REML.", correct = TRUE),
+  answer("REML, which is the default since mgcv 1.8."),
+  answer("ML, which gives the wiggliest fits."),
+  answer("No smoothing: lambda = 0."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r kcheck-ex, exercise=TRUE, exercise.lines=5}
+m_k20 <- gam(log(Ozone) ~ s(Solar.R) + s(Wind, k = 20) + s(Temp),
+             data = aq, method = "REML")
+set.seed(1)
+k.check(m_k20)
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("k was not the problem: the remaining pattern along Wind has another cause, such as an interaction with Temp.", correct = TRUE),
+  answer("k = 20 is still too small; try k = 50."),
+  answer("The smooth of Wind should be removed from the model."),
+  answer("The k-index test is meaningless for Gaussian models."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question(
+  lab_prompts[["q6"]],
+  answer("0.59, for s(Temp): moderate, below the usual level of concern (about 0.8).", correct = TRUE),
+  answer("0.97: severe; the smooths cannot be interpreted."),
+  answer("0.05: there is no relation between the covariates."),
+  answer("1.00, because Temp and Wind are correlated."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Interaction and comparison
+
+```{r compare-ex, exercise=TRUE, exercise.lines=4}
+lm_log <- lm(log(Ozone) ~ Solar.R + Wind + Temp, data = aq)
+AIC(lm_log, m_log, m_te, m_ti)
+summary(m_ti)$s.table
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("s(Solar.R) + s(Wind) + s(Temp) + ti(Temp, Wind), AIC about 137.9.", correct = TRUE),
+  answer("s(Solar.R) + te(Temp, Wind), AIC about 144.1."),
+  answer("The additive GAM, AIC about 166.4."),
+  answer("The linear model, AIC about 170.8."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("On days with wind about 10 mph and typical sunshine, the median ozone at 90 °F is estimated to be about 3.6 times that at 70 °F (between 2.3 and 5.5 times).", correct = TRUE),
+  answer("Raising the temperature by 20 °F causes ozone to increase by 3.58 ppb."),
+  answer("The mean ozone at 90 °F is 3.58 ppb higher than at 70 °F, whatever the wind."),
+  answer("The ratio is not significant because the interval is wide."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q9}
+question_text(
+  lab_prompts[["q9"]],
+  open_answer(),
+  placeholder = "Wind enters through the interaction, and it is correlated with Temp…",
+  trim = TRUE
+)
+```
+
+## Interpretation memo
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "Model chosen and why; temperature and wind with one number and its interval; one limitation.",
+  trim = TRUE,
+  rows = 8
+)
+```
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

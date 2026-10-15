@@ -1,0 +1,231 @@
+---
+title: "Lab 07 — Generalized Additive Mixed Models"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(mgcv)
+library(nlme)
+library(splines)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+ox <- read.csv("data/Oxboys.csv")
+ox$Subject <- factor(ox$Subject)
+mc <- read.csv("data/mcycle.csv")
+m1 <- gam(height ~ s(age) + s(Subject, bs = "re"), data = ox, method = "REML")
+m2 <- gam(height ~ s(age) + s(Subject, bs = "re") + s(Subject, age, bs = "re"),
+          data = ox, method = "REML")
+m3 <- gam(height ~ s(age, k = 5) + s(age, Subject, bs = "fs", k = 5),
+          data = ox, method = "REML")
+lab_meta <- list(id = "lab07", title = "Generalized Additive Mixed Models",
+                 open = c("q9", "q10"))
+lab_prompts <- c(
+  q1 = "In the model height ~ s(age) + s(Subject, bs = \"re\"), the intraclass correlation is about…",
+  q2 = "A term s(Subject, bs = \"re\") is equivalent to…",
+  q3 = "Which model has the lowest AIC: random intercepts (m1), + random slopes (m2), or factor smooths (m3)?",
+  q4 = "The within-boy lag-1 residual correlation is 0.77 for m1 and 0.10 for m2. Why?",
+  q5 = "In gamm(height ~ s(age), random = list(Subject = ~ 1 + age)), the correlation between random intercepts and slopes is about…",
+  q6 = "Where do you find the variance components of a gamm() fit?",
+  q7 = "For the mcycle P-spline, sigma^2 / sigma_b^2 from lme() (REML) is about…",
+  q8 = "With random intercepts and corAR1(form = ~ Occasion | Subject), phi-hat is about 0.996 and the random-intercept SD about 0. The best reading is…",
+  q9 = "In one or two sentences: why is the smoothing parameter of a penalized spline a variance ratio?",
+  q10 = "Interpretation (100-150 words) of the growth model for a paediatrician."
+)
+```
+
+## What you will do
+
+Work through `lab.qmd` first. The data are loaded as `ox` (Oxboys) and `mc` (mcycle); the models `m1`, `m2` and `m3` of Sections 2–3 are fitted.
+
+```{r vcomp-ex, exercise=TRUE, exercise.lines=5}
+vc <- gam.vcomp(m1)$vc
+vc
+vc["s(Subject)", 1]^2 / (vc["s(Subject)", 1]^2 + vc["scale", 1]^2)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("0.98: almost all the variation in height around the growth curve is between boys.", correct = TRUE),
+  answer("0.16: boys are similar to each other."),
+  answer("0.50: half between, half within."),
+  answer("8.10: the between-boy standard deviation."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("Random intercepts b_i ~ N(0, sigma_b^2): an identity penalty on the subject coefficients, with lambda = sigma^2 / sigma_b^2.", correct = TRUE),
+  answer("A fixed effect for each boy, estimated without penalty."),
+  answer("A smooth function of the subject number."),
+  answer("A random slope in age for each boy."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Subject-specific curves
+
+```{r aic-ex, exercise=TRUE, exercise.lines=8}
+AIC(m1, m2, m3)
+lag1 <- function(r) {
+  d <- split(r, ox$Subject)
+  cor(unlist(lapply(d, function(v) v[-length(v)])), unlist(lapply(d, function(v) v[-1])))
+}
+c(m1 = lag1(residuals(m1)), m2 = lag1(residuals(m2)))
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("m3, the factor-smooth model (AIC about 355).", correct = TRUE),
+  answer("m2, random slopes (AIC about 454)."),
+  answer("m1, random intercepts (AIC about 809)."),
+  answer("They cannot be compared because they have different random effects."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("Boys grow at different rates: with parallel curves, a fast-growing boy has runs of negative and then positive residuals. Random slopes absorb this.", correct = TRUE),
+  answer("Because the measurements in m2 are independent by design."),
+  answer("Because m2 has a larger basis dimension for s(age)."),
+  answer("Because the residual variance is larger in m2."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## gamm() and gamm4()
+
+```{r gamm-ex, exercise=TRUE, exercise.lines=4}
+g2 <- gamm(height ~ s(age), random = list(Subject = ~ 1 + age),
+           data = ox, method = "REML")
+VarCorr(g2$lme)
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("0.64: boys who are taller than average at the centre of the age range also tend to grow faster.", correct = TRUE),
+  answer("0: gamm() forces independent intercepts and slopes."),
+  answer("-0.64: taller boys grow more slowly."),
+  answer("0.98, the intraclass correlation."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question(
+  lab_prompts[["q6"]],
+  answer("In VarCorr(fit$lme); the smooth's own random part appears there as the Xr block.", correct = TRUE),
+  answer("In summary(fit$gam), in the edf column."),
+  answer("In AIC(fit$gam)."),
+  answer("They are not estimated by gamm()."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Smoother as mixed model
+
+```{r mm-ex, exercise=TRUE, exercise.lines=14}
+y <- mc$accel; x <- mc$times
+nseg <- 17; dx <- diff(range(x)) / nseg
+knots <- seq(min(x) - 3 * dx, max(x) + 3 * dx, by = dx)
+B <- splineDesign(knots, x, ord = 4, outer.ok = TRUE)
+S <- crossprod(diff(diag(ncol(B)), differences = 2))
+fit_pen <- gam(y ~ B - 1, paraPen = list(B = list(S)), method = "REML")
+e <- eigen(S, symmetric = TRUE); pos <- e$values > 1e-8
+Z <- B %*% e$vectors[, pos] %*% diag(1 / sqrt(e$values[pos]))
+g <- factor(rep(1, length(y)))
+fit_lme <- lme(y ~ x, random = list(g = pdIdent(~ Z - 1)), method = "REML")
+c(lambda_lme = fit_lme$sigma^2 / as.numeric(VarCorr(fit_lme)[1, "Variance"]),
+  lambda_gam = fit_pen$sp)
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("0.223, the same as the smoothing parameter chosen by gam(method = \"REML\").", correct = TRUE),
+  answer("4.49, because the two methods use different criteria."),
+  answer("12.0, the edf of the fit."),
+  answer("512.6, the residual variance."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("The AR(1) term and the random intercept compete for the same within-boy correlation; the two structures are only weakly identified.", correct = TRUE),
+  answer("Boys do not differ in height."),
+  answer("The AR(1) model is clearly the true model."),
+  answer("The measurements are independent within each boy."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Written answers
+
+```{r q9}
+question_text(
+  lab_prompts[["q9"]],
+  open_answer(),
+  placeholder = "Joint density of y and b, multiply by -2 sigma^2…",
+  trim = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "Typical growth over the period (with interval); differences in height and growth rate; one limitation.",
+  trim = TRUE,
+  rows = 8
+)
+```
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

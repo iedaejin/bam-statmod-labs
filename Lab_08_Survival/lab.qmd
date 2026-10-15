@@ -1,0 +1,228 @@
+---
+title: "Lab 08 — Survival Analysis: Kaplan–Meier and Cox Regression"
+subtitle: "Session 28: Censored and Survival Data"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals {.unnumbered}
+
+You will analyse the Veterans' Administration lung cancer trial: 137 men with advanced inoperable lung cancer were randomised to a standard or a test chemotherapy and followed until death. Nine of them were still alive at the end of follow-up, so their survival times are **right-censored**. By the end of the lab you should be able to:
+
+1. Build `Surv()` objects and explain what a censored time tells you.
+2. Estimate survival curves with Kaplan–Meier, report medians with confidence intervals, and compare groups with the log-rank test.
+3. Fit an exponential model by maximum likelihood and check it against Kaplan–Meier.
+4. Fit a Cox proportional hazards model and interpret hazard ratios with confidence intervals.
+5. Test the proportional hazards assumption with `cox.zph()` and repair a violation.
+
+Work in pairs. Run each chunk, read the output, and answer the **Your turn** tasks in your own file. The graded part is `tutorial.Rmd` (see the last section).
+
+## Setup
+
+```{r}
+library(tidyverse)
+library(survival)
+
+vet <- read_csv("data/veteran.csv", show_col_types = FALSE) |>
+  mutate(
+    trt = factor(trt, levels = c("standard", "test")),
+    celltype = factor(celltype, levels = c("squamous", "smallcell", "adeno", "large")),
+    prior = factor(prior, levels = c("no", "yes"))
+  )
+glimpse(vet)
+```
+
+`time` is days from randomisation; `status` is 1 if the death was observed and 0 if the patient was censored; `karno` is the Karnofsky performance score (10–99, higher means better general condition); `diagtime` is months from diagnosis to randomisation.
+
+```{r}
+vet |> count(trt, status)
+vet |> count(celltype, trt)
+```
+
+## Survival objects and censoring
+
+A survival response is the pair $(y_i, \delta_i)$ with $y_i = \min(T_i, C_i)$ and $\delta_i = \mathbf 1\{T_i \le C_i\}$. `Surv()` stores it; censored times print with a `+`.
+
+```{r}
+s <- Surv(vet$time, vet$status)
+head(s, 15)
+```
+
+Patient 10 has `100+`: we know only that $T_{10} > 100$ days. Treating 100 as a death time would understate this patient's survival; dropping the patient would remove someone who survived at least 100 days. Both errors bias the analysis towards shorter survival.
+
+**Your turn 2.1.** How many patients are censored in each arm? Find the shortest and the longest censored time. Why does a long censored time carry more information than a short one?
+
+## Kaplan–Meier curves
+
+The Kaplan–Meier estimator multiplies conditional survival probabilities over the distinct death times,
+$$\hat S(t) = \prod_{t_j \le t}\left(1 - \frac{d_j}{n_j}\right),$$
+where $n_j$ is the number at risk just before $t_j$ and $d_j$ the number of deaths at $t_j$. Its pointwise standard error comes from Greenwood's formula, $\widehat{\operatorname{Var}}\{\hat S(t)\} = \hat S(t)^2 \sum_{t_j \le t} d_j/\{n_j(n_j - d_j)\}$.
+
+```{r}
+km_trt <- survfit(Surv(time, status) ~ trt, data = vet)
+km_trt
+summary(km_trt, times = c(90, 180, 365))
+```
+
+The first table gives the **median survival** with a 95% confidence interval: the first time at which $\hat S(t) \le 0.5$, and the times at which the confidence band crosses 0.5.
+
+```{r}
+plot(km_trt, col = c("navy", "firebrick"), lwd = 2, conf.int = TRUE, mark.time = TRUE,
+     xlab = "Days from randomisation", ylab = "Estimated S(t)")
+legend("topright", levels(vet$trt), col = c("navy", "firebrick"), lwd = 2, bty = "n")
+```
+
+**Your turn 3.1.** Report the median survival with its 95% CI in each arm. At which of the three times (90, 180, 365 days) is the estimated survival higher in the test arm? What does this tell you about the two curves?
+
+**Your turn 3.2.** Fit `survfit(Surv(time, status) ~ celltype, data = vet)`. Which cell types have the shortest median survival? Plot the four curves.
+
+## Log-rank tests
+
+The log-rank test compares, at every death time, the observed deaths in a group with those expected if all groups shared one survival curve, and sums over time: $X^2 = (O_1 - E_1)^2/V_1 \sim \chi^2_1$ under $H_0$.
+
+```{r}
+survdiff(Surv(time, status) ~ trt, data = vet)
+survdiff(Surv(time, status) ~ celltype, data = vet)
+```
+
+The treatment comparison gives $X^2 = 0.008$ ($p = 0.93$). The log-rank test is most powerful when one group has a hazard that is a constant multiple of the other's. When the curves cross, as here, early and late differences cancel in $O - E$.
+
+**Your turn 4.1.** Write one sentence on each test. For cell type, which group has many more deaths than expected, and which has many fewer?
+
+## A parametric model: exponential vs Kaplan–Meier
+
+With right censoring each patient contributes $f(y_i)^{\delta_i}S(y_i)^{1-\delta_i}$ to the likelihood. For a constant hazard $\lambda$,
+$$\ell(\lambda) = d\log\lambda - \lambda\sum_i y_i, \qquad \hat\lambda = \frac{d}{\sum_i y_i}, \qquad \mathrm{se}(\hat\lambda) = \frac{\hat\lambda}{\sqrt d}.$$
+
+```{r}
+d <- sum(vet$status)
+tot <- sum(vet$time)
+lam_hat <- d / tot
+c(deaths = d, person_days = tot, lambda = lam_hat, se = lam_hat / sqrt(d))
+```
+
+`survreg()` fits $\log T = \beta_0 + \sigma W$; the exponential model fixes $\sigma = 1$ and $\lambda = e^{-\beta_0}$.
+
+```{r}
+fit_exp <- survreg(Surv(time, status) ~ 1, data = vet, dist = "exponential")
+exp(-coef(fit_exp))
+fit_wei <- survreg(Surv(time, status) ~ 1, data = vet, dist = "weibull")
+fit_wei$scale
+anova(fit_exp, fit_wei)
+```
+
+```{r}
+km_all <- survfit(Surv(time, status) ~ 1, data = vet)
+plot(km_all, conf.int = FALSE, xlim = c(0, 600), xlab = "Days", ylab = "S(t)")
+curve(exp(-lam_hat * x), add = TRUE, col = "firebrick", lwd = 2)
+legend("topright", c("Kaplan-Meier", "exponential"), col = c("black", "firebrick"),
+       lwd = 2, bty = "n")
+```
+
+**Your turn 5.1.** Compute the exponential median $\log 2/\hat\lambda$ and compare it with the Kaplan–Meier median of all patients (`km_all`). Over which period does the exponential curve lie above the Kaplan–Meier curve?
+
+**Your turn 5.2.** The Weibull scale is $\hat\sigma = 1.17$, so the shape is $\hat k = 1/\hat\sigma = 0.85$. Is the hazard increasing or decreasing over time? Is the likelihood ratio test against the exponential significant?
+
+## The Cox proportional hazards model
+
+The Cox model leaves the baseline hazard unspecified, $h(t \mid x) = h_0(t)\exp(x^\top\beta)$, and estimates $\beta$ from the partial likelihood. $e^{\beta_k}$ is the hazard ratio for a one-unit increase in $x_k$ with the other covariates fixed.
+
+```{r}
+fit_cox <- coxph(Surv(time, status) ~ trt + karno + celltype + age, data = vet)
+summary(fit_cox)
+```
+
+Hazard ratios with 95% confidence intervals, and the Karnofsky score per 10 points:
+
+```{r}
+round(cbind(HR = exp(coef(fit_cox)), exp(confint(fit_cox))), 3)
+exp(10 * coef(fit_cox)["karno"])
+exp(10 * confint(fit_cox)["karno", ])
+```
+
+Read the Karnofsky result this way: *holding treatment, cell type and age fixed, a patient whose Karnofsky score is 10 points higher has an estimated hazard of death 0.72 times as large (95% CI 0.65 to 0.80) at any time since randomisation, if the proportional hazards assumption holds.* A hazard ratio is a ratio of instantaneous death rates among patients still alive. It is not a ratio of survival times or of probabilities of dying.
+
+Does cell type add to the model? Compare nested Cox models with a likelihood ratio test:
+
+```{r}
+fit_nocell <- coxph(Surv(time, status) ~ trt + karno + age, data = vet)
+anova(fit_nocell, fit_cox)
+```
+
+**Your turn 6.1.** Interpret the hazard ratio of the test treatment and its confidence interval. Is there evidence that the test treatment works? Interpret the hazard ratio for adeno vs squamous.
+
+**Your turn 6.2.** Add `diagtime` and `prior` to the model. Do they change your conclusions?
+
+## Checking proportional hazards
+
+Under PH every $\beta_k$ is constant in time. `cox.zph()` regresses the scaled Schoenfeld residuals on a function of time; a non-zero slope suggests that $\beta_k$ changes with $t$.
+
+```{r}
+zp <- cox.zph(fit_cox)
+zp
+plot(zp[2], resid = TRUE, se = TRUE, lwd = 2)   # the second term is karno
+abline(h = coef(fit_cox)["karno"], col = "firebrick", lty = 2)
+```
+
+The smoothed line estimates $\beta_{\text{karno}}(t)$. The horizontal dashed line is the constant estimate of the Cox model.
+
+A graphical check uses $\log\{-\log \hat S(t)\}$ against $\log t$: under PH, $\log H(t \mid x) = \log H_0(t) + x^\top\beta$, so the curves for different groups are parallel.
+
+```{r}
+vet <- vet |> mutate(kgrp = cut(karno, c(0, 40, 60, 100), labels = c("10-40", "50-60", "70-99")))
+km_k <- survfit(Surv(time, status) ~ kgrp, data = vet)
+plot(km_k, fun = "cloglog", col = c("navy", "firebrick", "darkgreen"), lwd = 2,
+     xlab = "Days (log scale)", ylab = "log(-log S(t))")
+legend("topleft", levels(vet$kgrp), col = c("navy", "firebrick", "darkgreen"), lwd = 2, bty = "n")
+```
+
+**Your turn 7.1.** Which covariates fail the PH test at the 5% level? Describe the shape of $\hat\beta_{\text{karno}}(t)$ in words. Are the log–log curves parallel?
+
+## Repairing the violation
+
+Two standard remedies:
+
+* **Stratification**: each Karnofsky group gets its own baseline hazard, $h_s(t \mid x) = h_{0s}(t)\exp(x^\top\beta)$. No hazard ratio is estimated for the stratifying variable.
+* **Time-varying coefficient**: split follow-up into periods with `survSplit()` and give `karno` one coefficient per period.
+
+```{r}
+fit_strat <- coxph(Surv(time, status) ~ trt + celltype + age + strata(kgrp), data = vet)
+round(summary(fit_strat)$coefficients, 4)
+
+vet_split <- survSplit(Surv(time, status) ~ ., data = vet, cut = c(90, 180),
+                       episode = "tgroup", id = "id")
+fit_step <- coxph(Surv(tstart, time, status) ~ trt + celltype + age + karno:strata(tgroup),
+                  data = vet_split)
+round(summary(fit_step)$coefficients, 4)
+cox.zph(fit_step)
+AIC(fit_cox, fit_step)
+```
+
+The split data set has one row per patient and period, with `(tstart, time]` the interval at risk. The partial likelihood of `fit_step` uses the same risk sets as `fit_cox`, so the two AIC values can be compared. The AIC of `fit_strat` cannot be compared with them: stratification changes the risk sets.
+
+**Your turn 8.1.** Report the hazard ratio per 10 Karnofsky points in each period (0–90, 90–180, more than 180 days) as $\exp(10\hat\beta)$. In which period does baseline fitness matter? Does the global PH test improve?
+
+**Your turn 8.2.** `celltype` is also flagged by `cox.zph()`. Fit the step-function model with `strata(celltype)` added (and `celltype` removed from the covariates). What do you gain and what do you lose?
+
+## Interpretation memo
+
+Write a memo of about 150 words for a clinical audience. It must answer three questions, each with an estimate and a 95% confidence interval:
+
+1. Does the test treatment prolong survival?
+2. Which patients die sooner (cell type, Karnofsky score)?
+3. How does the association between the Karnofsky score and the hazard change over follow-up, and why does a single hazard ratio hide this?
+
+Use "hazard" for the instantaneous rate, not "risk" or "probability". Avoid causal language for the covariates that were not randomised.
+
+## DELIVERABLE {.unnumbered}
+
+Open `tutorial.Rmd` in this folder and click **Run Document**. Answer all the questions (use the code boxes to compute the numbers), type your name in the Submit section and download the `.txt` file. Upload the `.txt` to Blackboard **before Session 29**. The memo of Section 9 is the last (open) question of the tutorial.
+
+## Source {.unnumbered}
+
+`veteran.csv` is the `veteran` dataset of the R package **survival** (Kalbfleisch & Prentice 1980), LGPL (>= 2). See `data/SOURCE.txt`.

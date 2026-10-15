@@ -1,0 +1,302 @@
+---
+title: "Lab 01 — Maximum likelihood in R"
+subtitle: "Sessions 3–4: Maximum likelihood estimation"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+In this lab you will:
+
+- write a log-likelihood as an R function and maximise it, first by calculus and then with `optim()`;
+- get a standard error from the Hessian, and build Wald and likelihood-ratio (LR) intervals;
+- check whether the fitted model describes the data;
+- run a likelihood-ratio test between two nested models;
+- see what goes wrong when a likelihood has several maxima, unidentified parameters or no maximum at all.
+
+Work in pairs. Plan for 60–75 minutes. Notation follows the slides: $\ell(\theta)$ is the log-likelihood, $S(\theta)$ the score, $I(\theta)=-\ell''(\theta)$ the observed information and $\mathrm{se}(\hat\theta)=I(\hat\theta)^{-1/2}$.
+
+## Setup
+
+Open the project for this lab (Posit Cloud or Codespaces) so that the working directory is the lab folder. The two data files are in `data/`; see `data/SOURCE.txt` for their origin.
+
+```{r}
+library(MASS)          # only for fitdistr(), used once as a check
+disc   <- read.csv("data/discoveries.csv")   # year, count
+geyser <- read.csv("data/geyser.csv")        # waiting, duration
+str(disc)
+str(geyser)
+y <- disc$count
+n <- length(y)
+c(n = n, total = sum(y), mean = mean(y), var = var(y))
+```
+
+`discoveries` records the number of "great" inventions and scientific discoveries in each year from 1860 to 1959. `geyser` holds 299 eruptions of the Old Faithful geyser in August 1985: `waiting` is the waiting time (minutes) before each eruption.
+
+## A Poisson model for the discoveries
+
+```{r}
+plot(disc$year, y, type = "h", lwd = 2, xlab = "year", ylab = "discoveries")
+```
+
+Model: $y_1,\dots,y_n \stackrel{iid}{\sim}\mathrm{Pois}(\lambda)$. Then
+
+$$
+\ell(\lambda)=\sum_i y_i\log\lambda-n\lambda-\sum_i\log y_i!,\qquad
+S(\lambda)=\frac{\sum_i y_i}{\lambda}-n,\qquad
+I(\lambda)=\frac{\sum_i y_i}{\lambda^2}.
+$$
+
+Setting $S(\lambda)=0$ gives $\hat\lambda=\bar y$, and $\mathrm{se}(\hat\lambda)=I(\hat\lambda)^{-1/2}=\sqrt{\bar y/n}$.
+
+```{r}
+loglik_pois <- function(lambda) sum(dpois(y, lambda, log = TRUE))
+lambda_hat <- mean(y)
+se_hat <- sqrt(lambda_hat / n)
+c(lambda_hat = lambda_hat, se = se_hat)
+
+lam_grid <- seq(2.4, 3.9, by = 0.01)
+plot(lam_grid, sapply(lam_grid, loglik_pois), type = "l", lwd = 2,
+     xlab = expression(lambda), ylab = "log-likelihood")
+abline(v = lambda_hat, lty = 2)
+```
+
+Always use `log = TRUE` in the density functions. A product of 100 probabilities underflows long before the sum of their logs does.
+
+**Your turn.** Check numerically that the score is zero at $\hat\lambda$: write `score_pois <- function(lambda) sum(y) / lambda - n` and evaluate it at `lambda_hat` and at 3.
+
+## The same MLE with `optim()`
+
+`optim()` **minimises**, so we give it the negative log-likelihood. With `hessian = TRUE` it also returns the second derivative of the function it minimised at the solution. For $-\ell$ that is exactly the observed information $I(\hat\lambda)$.
+
+```{r}
+nll_pois <- function(lambda) -loglik_pois(lambda)
+fit1 <- optim(par = 1, fn = nll_pois, method = "Brent",
+              lower = 0.01, upper = 20, hessian = TRUE)
+fit1$par                       # lambda_hat
+fit1$convergence               # 0 means the algorithm reports success
+1 / sqrt(fit1$hessian)         # se = I(lambda_hat)^(-1/2)
+```
+
+A positive parameter is often easier to handle on the log scale: $\theta=\log\lambda$ can take any real value, so no bounds are needed. The Hessian is then the information for $\theta$, and the delta method gives $\mathrm{se}(\hat\lambda)\approx\hat\lambda\,\mathrm{se}(\hat\theta)$.
+
+```{r}
+fit2 <- optim(par = 0, fn = function(theta) nll_pois(exp(theta)),
+              method = "BFGS", hessian = TRUE)
+lambda_hat2 <- exp(fit2$par)
+se_theta <- 1 / sqrt(fit2$hessian)
+c(lambda_hat = lambda_hat2, se_log_lambda = se_theta, se_lambda = lambda_hat2 * se_theta)
+```
+
+**Your turn.** Start `fit2` from `par = log(20)` instead. Do you get the same answer? How many function evaluations (`fit2$counts`) did each start need?
+
+## Wald and likelihood-ratio intervals
+
+The 95% Wald interval is $\hat\lambda\pm1.96\,\mathrm{se}(\hat\lambda)$. The 95% likelihood (LR) interval is the set of $\lambda$ with $\ell(\lambda)\ge\ell(\hat\lambda)-\chi^2_{1,0.95}/2=\ell(\hat\lambda)-1.92$. Find its two ends with `uniroot()`.
+
+```{r}
+z <- qnorm(0.975)
+wald_ci <- lambda_hat + c(-1, 1) * z * se_hat
+
+cut <- qchisq(0.95, df = 1) / 2
+f <- function(lambda) loglik_pois(lambda) - loglik_pois(lambda_hat) + cut
+lr_ci <- c(uniroot(f, c(1, lambda_hat), tol = 1e-10)$root,
+           uniroot(f, c(lambda_hat, 6), tol = 1e-10)$root)
+
+round(rbind(Wald = wald_ci, LR = lr_ci), 3)
+```
+
+The two intervals are close because $n=100$ and $\sum y_i=310$ are large enough for $\ell$ to be nearly quadratic. The LR interval is shifted slightly to the right: the Poisson log-likelihood falls more slowly above $\hat\lambda$ than below it.
+
+**Your turn.** Test $H_0:\lambda=3$ with the LR statistic $2\{\ell(\hat\lambda)-\ell(3)\}$ and with the Wald statistic $(\hat\lambda-3)^2I(\hat\lambda)$. Is 3 inside both intervals? Is that consistent with the tests?
+
+## Does the Poisson model fit?
+
+A small standard error is only meaningful if the model is reasonable. The Poisson model says the variance equals the mean. Compare observed counts of years with 0, 1, 2, … discoveries with the expected counts $n\,P(Y=k)$ under $\hat\lambda$ (the last cell collects 7 or more).
+
+```{r}
+k <- 0:7
+observed <- table(factor(pmin(y, 7), levels = k))
+expected <- n * c(dpois(0:6, lambda_hat), ppois(6, lambda_hat, lower.tail = FALSE))
+freq <- rbind(observed = as.numeric(observed), expected = expected)
+colnames(freq) <- c(0:6, "7+")
+round(freq, 1)
+
+c(mean = mean(y), variance = var(y), ratio = var(y) / mean(y))
+```
+
+```{r}
+barplot(rbind(as.numeric(observed), expected), beside = TRUE, names.arg = c(0:6, "7+"),
+        legend.text = c("observed", "Poisson expected"), xlab = "discoveries in a year")
+```
+
+A formal check: under the Poisson model, the dispersion statistic $D=\sum_i(y_i-\bar y)^2/\bar y$ is approximately $\chi^2_{n-1}$.
+
+```{r}
+D <- sum((y - mean(y))^2) / mean(y)
+c(D = D, df = n - 1, p_value = pchisq(D, df = n - 1, lower.tail = FALSE))
+```
+
+**Your turn.** Describe in two sentences where the Poisson model misses (look at 0 and at 7 or more). What does this do to the standard error you computed in Section 3: is it too small or too large? (We return to overdispersion in the GLM block, Session 10.)
+
+## Exponential or gamma? A likelihood-ratio test
+
+Turn to the Old Faithful waiting times. If eruptions happened at random in time (a Poisson process), the waiting times would be exponential. The gamma model with shape $\alpha$ and rate $\beta$ contains the exponential as the special case $\alpha=1$, so we can test $H_0:\alpha=1$ with an LR test on 1 degree of freedom.
+
+```{r}
+w <- geyser$waiting
+hist(w, breaks = 30, freq = FALSE, xlab = "waiting time (min)", main = "")
+```
+
+The exponential MLE has a closed form ($\hat\mu=\bar w$). The gamma MLE does not, so we use `optim()` on the log scale.
+
+```{r}
+ll_exp <- sum(dexp(w, rate = 1 / mean(w), log = TRUE))
+
+nll_gamma <- function(par)       # par = (log alpha, log beta)
+  -sum(dgamma(w, shape = exp(par[1]), rate = exp(par[2]), log = TRUE))
+fit_g <- optim(c(0, log(1 / mean(w))), nll_gamma, method = "BFGS", hessian = TRUE)
+fit_g$convergence
+alpha_hat <- exp(fit_g$par[1])
+beta_hat  <- exp(fit_g$par[2])
+ll_gamma  <- -fit_g$value
+c(alpha_hat = alpha_hat, beta_hat = beta_hat, ll_exp = ll_exp, ll_gamma = ll_gamma)
+```
+
+The starting value `c(0, log(1 / mean(w)))` is the exponential fit itself ($\alpha=1$). Check the result against `MASS::fitdistr()`:
+
+```{r}
+fitdistr(w, "gamma", start = list(shape = 20, rate = 0.3))$estimate
+```
+
+Now the test:
+
+```{r}
+LR <- 2 * (ll_gamma - ll_exp)
+c(LR = LR, p_value = pchisq(LR, df = 1, lower.tail = FALSE))
+se_alpha <- alpha_hat * sqrt(solve(fit_g$hessian)[1, 1])   # delta method
+c(alpha_hat = alpha_hat, se = se_alpha)
+```
+
+The LR statistic is enormous: the exponential model is rejected decisively. The waiting times are far more regular than a memoryless process would produce. In the lecture the same test on the 12 aircondit times gave $LR=1.10$: with small samples the data often cannot separate the two models.
+
+**Your turn.** Overlay the fitted exponential and gamma densities on the histogram with `curve(dexp(x, 1 / mean(w)), add = TRUE)` and `curve(dgamma(x, alpha_hat, beta_hat), add = TRUE, lty = 2)`. The gamma wins the test. Is it a good description of the histogram?
+
+## A two-component mixture: convergence and identifiability
+
+The histogram is bimodal: short and long waits. A natural model is a two-component normal mixture
+
+$$
+f(w)=p\,\phi(w;\mu_1,\sigma_1)+(1-p)\,\phi(w;\mu_2,\sigma_2),
+$$
+
+with five parameters. We optimise over $(\mathrm{logit}\,p,\ \mu_1,\ \mu_2,\ \log\sigma_1,\ \log\sigma_2)$ so that every parameter is unconstrained. `plogis()` is the inverse logit.
+
+```{r}
+nll_mix <- function(par, y) {
+  p  <- plogis(par[1])
+  s1 <- exp(par[4]); s2 <- exp(par[5])
+  -sum(log(p * dnorm(y, par[2], s1) + (1 - p) * dnorm(y, par[3], s2)))
+}
+show_fit <- function(fit) {
+  round(c(p = plogis(fit$par[1]), mu1 = fit$par[2], mu2 = fit$par[3],
+          sigma1 = exp(fit$par[4]), sigma2 = exp(fit$par[5]),
+          loglik = -fit$value, convergence = fit$convergence), 3)
+}
+```
+
+### A sensible start
+
+Read starting values off the histogram: means near 55 and 80, standard deviations about 5, equal weights.
+
+```{r}
+start_A <- c(0, 55, 80, log(5), log(5))
+fit_A <- optim(start_A, nll_mix, y = w, method = "BFGS", hessian = TRUE)
+show_fit(fit_A)
+eigen(fit_A$hessian)$values      # all positive: a proper local maximum
+```
+
+About 31% of eruptions follow a short wait (mean about 54 minutes) and 69% a long wait (mean about 80 minutes). The maximised log-likelihood is much larger than the gamma's, with three more parameters.
+
+### Label switching
+
+```{r}
+start_B <- c(0, 80, 55, log(5), log(5))
+fit_B <- optim(start_B, nll_mix, y = w, method = "BFGS")
+show_fit(fit_B)
+```
+
+Same log-likelihood, same fitted density, but the components have swapped names and $p$ became $1-p$. The parameters are identifiable only up to relabelling. This is harmless if you notice it, and confusing if you average estimates over several runs.
+
+### A symmetric start
+
+```{r}
+start_C <- c(0, mean(w), mean(w), log(sd(w)), log(sd(w)))
+fit_C <- optim(start_C, nll_mix, y = w, method = "BFGS", hessian = TRUE)
+show_fit(fit_C)
+round(eigen(fit_C$hessian)$values, 4)
+```
+
+`optim()` reports convergence, yet the log-likelihood is far lower. With $\mu_1=\mu_2$ and $\sigma_1=\sigma_2$ the two components are identical: the gradient pushes both means the same way, so they never separate, and the fit is a single normal distribution. At this point $p$ is not identified (any $p$ gives the same density), so the Hessian has a zero eigenvalue, and one eigenvalue is negative: this is a saddle point, not a maximum.
+
+### A degenerate start
+
+Put one component on a single observed value with a tiny standard deviation. The waiting times are recorded in whole minutes, and 80 minutes occurs 13 times.
+
+```{r}
+start_D <- c(0, 80, 70, log(0.01), log(10))
+fit_D <- tryCatch(optim(start_D, nll_mix, y = w, method = "BFGS"),
+                  error = function(e) conditionMessage(e))
+fit_D
+```
+
+The optimiser fails. The reason is that the mixture log-likelihood has **no maximum**: put $\mu_1=80$ and let $\sigma_1\to0$, and the 13 tied observations each contribute a density that grows like $1/\sigma_1$.
+
+```{r}
+for (s in c(1, 0.1, 0.01, 0.001, 1e-4))
+  cat("sigma1 =", s, " loglik =", round(-nll_mix(c(0, 80, 72, log(s), log(14)), w), 1), "\n")
+```
+
+The MLE we want is the largest **local** maximum with both standard deviations bounded away from 0.
+
+### Many random starts
+
+In practice we run the optimiser from many starting values and compare. Here the two means start at two randomly chosen observations.
+
+```{r}
+set.seed(2027)
+runs <- t(replicate(20, {
+  st <- c(0, sample(w, 2), log(5), log(5))
+  fit <- tryCatch(optim(st, nll_mix, y = w, method = "BFGS"), error = function(e) NULL)
+  if (is.null(fit)) rep(NA, 7) else show_fit(fit)
+}))
+runs[order(-runs[, "loglik"]), ]
+table(round(runs[, "loglik"], 1))
+```
+
+**Your turn.** Classify the 20 runs: which reached the two-component solution (in either labelling), which collapsed to a single normal ($p$ near 0 or 1), and which is degenerate (a standard deviation near 0)? Every run reports `convergence = 0`. Which one would you report, and why is it not simply the run with the largest log-likelihood?
+
+## Summary and model comparison
+
+```{r}
+aic <- c(exponential = -2 * ll_exp + 2 * 1,
+         gamma       = -2 * ll_gamma + 2 * 2,
+         mixture     = 2 * fit_A$value + 2 * 5)
+round(aic, 1)
+```
+
+The mixture has by far the smallest AIC (AIC is defined in Session 6; smaller is better). Note that a formal LR test of one against two normal components does **not** have a $\chi^2$ reference distribution: under the null, $p$ sits on the boundary and the second mean is not identified, so the regularity conditions fail.
+
+```{r}
+sessionInfo()
+```
+
+## DELIVERABLE
+
+Open `tutorial.Rmd` in this folder and click **Run Document**. Answer the questions (the exercise boxes have the data already loaded), type your name, and download the `.txt` file. Upload the `.txt` to Blackboard **before the next session**. It counts toward *Intermediate tests*. One file per student, even if you worked in a pair.

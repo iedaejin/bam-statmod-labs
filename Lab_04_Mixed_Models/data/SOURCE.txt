@@ -1,0 +1,34 @@
+sleepstudy.csv
+  Source: R package 'lme4' (Bates, Maechler, Bolker and Walker), version 2.0-6, object 'sleepstudy':
+  average reaction time per day (ms) for 18 subjects in a sleep-deprivation study, Days 0-9.
+  The lme4 documentation notes that Days 0-1 were adaptation and training, Day 2 was baseline, and
+  sleep deprivation started after Day 2; the data are the most sleep-deprived group (3 hours time in bed).
+  Original reference: Belenky, G., Wesensten, N. J., Thorne, D. R., Thomas, M. L., Sing, H. C.,
+  Redmond, D. P., Russo, M. B. and Balkin, T. J. (2003) Patterns of performance degradation and
+  restoration during sleep restriction and subsequent recovery: a sleep dose-response study.
+  Journal of Sleep Research 12(1), 1-12.
+  Columns: Subject (subject number, read as a factor), Days (days of sleep deprivation, 0-9),
+  Reaction (average reaction time, ms).
+  Values unchanged (column order changed); written with
+    s <- data.frame(Subject = as.character(sleepstudy$Subject), Days = sleepstudy$Days,
+                    Reaction = sleepstudy$Reaction)
+    write.csv(s, "sleepstudy.csv", row.names = FALSE)
+
+cbpp.csv
+  Source: R package 'lme4', version 2.0-6, object 'cbpp': serological incidence of contagious bovine
+  pleuropneumonia (CBPP) in zebu cattle in 15 commercial herds in the Boji district of Ethiopia,
+  followed over 4 periods (56 herd-periods; some data lost to follow-up).
+  Original reference: Lesnoff, M., Laval, G., Bonnet, P., Abdicho, S., Workalemahu, A., Kifle, D.,
+  Peyraud, A., Lancelot, R. and Thiaucourt, F. (2004) Within-herd spread of contagious bovine
+  pleuropneumonia in Ethiopian highlands. Preventive Veterinary Medicine 64, 27-40.
+  Columns: herd (1-15, read as a factor), period (1-4, read as a factor), incidence (number of new
+  serological cases in the period), size (herd size at the beginning of the period).
+  Values unchanged (column order changed; factors written as integers); written with
+    c2 <- data.frame(herd = as.integer(as.character(cbpp$herd)),
+                     period = as.integer(as.character(cbpp$period)),
+                     incidence = cbpp$incidence, size = cbpp$size)
+    write.csv(c2, "cbpp.csv", row.names = FALSE)
+
+  License: lme4 is distributed under the GNU General Public License, version 2 or later (GPL (>= 2)).
+
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

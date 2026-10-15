@@ -1,0 +1,36 @@
+File: veteran.csv (columns: trt, celltype, time, status, karno, diagtime, age, prior)
+
+Source: the dataset veteran in the R package survival (version 3.8-9; R 4.6).
+Veterans' Administration Lung Cancer study: a randomised trial of two treatment
+regimens (standard and test chemotherapy) for advanced inoperable lung cancer.
+137 patients, 128 deaths and 9 censored survival times.
+
+Variables:
+  trt       treatment: standard, test (coded 1, 2 in the package)
+  celltype  tumour cell type: squamous, smallcell, adeno, large
+  time      survival time in days from randomisation
+  status    1 = death observed, 0 = censored
+  karno     Karnofsky performance score (10-99; higher = better general condition)
+  diagtime  months from diagnosis to randomisation
+  age       age in years
+  prior     prior therapy: no, yes (coded 0, 10 in the package)
+
+The file was written with
+  library(survival)
+  v <- survival::veteran
+  v$trt <- factor(v$trt, 1:2, c("standard", "test"))
+  v$prior <- factor(v$prior, c(0, 10), c("no", "yes"))
+  v$celltype <- as.character(v$celltype)
+  write.csv(v[, c("trt", "celltype", "time", "status", "karno", "diagtime", "age", "prior")],
+            "data/veteran.csv", row.names = FALSE)
+In R, set the reference level when reading:
+  factor(celltype, levels = c("squamous", "smallcell", "adeno", "large")).
+
+Original source, as given in ?veteran:
+  D Kalbfleisch and RL Prentice (1980), The Statistical Analysis of Failure Time Data.
+  Wiley, New York.
+
+License: the survival package is distributed under LGPL (>= 2)
+(GNU Lesser General Public License, version 2 or later).
+
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

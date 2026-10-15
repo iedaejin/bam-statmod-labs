@@ -1,0 +1,16 @@
+mcycle.csv
+
+Source: R package MASS (Venables and Ripley), data set `mcycle`, written with
+  write.csv(MASS::mcycle, "data/mcycle.csv", row.names = FALSE)
+Columns: times = time after a simulated motorcycle impact (milliseconds);
+         accel = head acceleration of the crash-test dummy (g).
+133 rows; the rows are sorted by time and there are only 94 distinct times.
+
+Original reference: Silverman, B. W. (1985). Some aspects of the spline smoothing
+approach to non-parametric curve fitting. Journal of the Royal Statistical Society,
+Series B, 47, 1-52. Also described in Venables, W. N. and Ripley, B. D. (2002),
+Modern Applied Statistics with S, 4th ed., Springer.
+
+Licence: the MASS package is distributed under GPL-2 | GPL-3.
+
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

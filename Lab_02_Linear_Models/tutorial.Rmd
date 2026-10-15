@@ -1,0 +1,233 @@
+---
+title: "Lab 02 — Linear models: inference, diagnostics and selection"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(car)
+library(glmnet)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+savings <- read.csv("data/savings.csv")
+rownames(savings) <- savings$country
+prostate <- read.csv("data/prostate.csv")
+fit <- lm(sr ~ pop15 + pop75 + dpi + ddpi, data = savings)
+n <- nrow(savings)
+p <- length(coef(fit))
+set.seed(2027)
+test_id <- sample(nrow(prostate), 30)
+train <- prostate[-test_id, ]
+test  <- prostate[test_id, ]
+full_tr <- lm(lpsa ~ ., data = train)
+x_tr <- as.matrix(train[, names(train) != "lpsa"])
+x_te <- as.matrix(test[, names(test) != "lpsa"])
+set.seed(2028)
+foldid <- sample(rep(1:10, length.out = nrow(train)))
+cv <- cv.glmnet(x_tr, train$lpsa, alpha = 1, foldid = foldid)
+mse <- function(pred) mean((test$lpsa - pred)^2)
+lab_meta <- list(id = "lab02", title = "Linear models: inference, diagnostics and selection",
+                 open = c("q6", "q10"))
+lab_prompts <- c(
+  q1 = "In the savings model, the pop15 coefficient is -0.461. Which reading is correct?",
+  q2 = "The 95% confidence interval for the ddpi coefficient is about…",
+  q3 = "Test H0: the pop15 and pop75 coefficients are both 0 (model with dpi and ddpi vs the full model). The result is…",
+  q4 = "Which country has the largest leverage, and why?",
+  q5 = "Outliers: compare the largest studentized residual with the Bonferroni cut-off at the 5% level. Conclusion?",
+  q6 = "Refit the savings model without the country with the largest Cook's distance. Report the new ddpi coefficient, how many standard errors it moved, and whether you would drop the country. Justify.",
+  q7 = "vif(fit) gives 6.63 for pop75. By how much is the standard error of its coefficient inflated by collinearity?",
+  q8 = "Backward selection with the BIC penalty on the 67 training rows keeps…",
+  q9 = "On this test set of 30 men, which method has the smallest test MSE?",
+  q10 = "The leaky lasso had test MSE 0.41 and the honest one 0.63. Explain why, and explain why one split of 30 men cannot rank OLS, stepwise and lasso reliably."
+)
+```
+
+## What you will do
+
+Part 1 checks your inference and diagnostics for the `savings` model, `lm(sr ~ pop15 + pop75 + dpi + ddpi)`. Part 2 checks the selection and lasso comparison on `prostate`. The objects `savings`, `fit`, `n`, `p`, `prostate`, `train`, `test`, `full_tr`, `x_tr`, `x_te`, `foldid`, `cv` and the function `mse()` are already loaded, exactly as in `lab.qmd`. When you have answered, download the `.txt` at the end.
+
+## Part 1: inference
+
+```{r ci-ex, exercise=TRUE, exercise.lines=6}
+summary(fit)
+# 95% CI for ddpi by hand:
+# coef(fit)["ddpi"] + c(-1, 1) * qt(0.975, n - p) * ...
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("Countries with pop15 one point higher and the same pop75, dpi and ddpi have a savings rate about 0.46 points lower on average.", correct = TRUE),
+  answer("Raising a country's under-15 share by one point would lower its savings rate by 0.46 points."),
+  answer("A one-point higher pop15 goes with a 46% lower savings rate."),
+  answer("pop15 explains 46% of the variation in the savings rate."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("(0.015, 0.805)", correct = TRUE),
+  answer("(0.025, 0.794)"),
+  answer("(0.214, 0.606)"),
+  answer("(-0.753, -0.170)"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r f-ex, exercise=TRUE, exercise.lines=4}
+fit_age0 <- lm(sr ~ dpi + ddpi, data = savings)
+anova(fit_age0, fit)
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("F = 6.02 on 2 and 45 df, p = 0.005: reject H0; age structure matters given income and growth.", correct = TRUE),
+  answer("F = 1.72 on 2 and 45 df, p = 0.19: no evidence against H0."),
+  answer("F = 6.02 on 2 and 47 df, p = 0.05: borderline."),
+  answer("No test is needed: pop75 has p = 0.13 in summary(fit), so H0 holds."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Part 1: diagnostics
+
+```{r diag-ex, exercise=TRUE, exercise.lines=8}
+h <- hatvalues(fit)
+sort(h, decreasing = TRUE)[1:3]
+sort(abs(rstudent(fit)), decreasing = TRUE)[1:3]
+qt(1 - 0.05 / (2 * n), df = n - p - 1)
+sort(cooks.distance(fit), decreasing = TRUE)[1:3]
+# refit without one country:
+# coef(summary(update(fit, subset = country != "...")))
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("Libya (h = 0.53): its income growth ddpi = 16.7% is far from the other countries.", correct = TRUE),
+  answer("Zambia (h = 0.53): it has the largest residual."),
+  answer("United States (h = 0.33): it has the highest dpi."),
+  answer("Japan (h = 0.22): it has the largest Cook's distance."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("Largest |t_i| is Zambia, 2.85, below the cut-off 3.53: no outliers at the 5% level.", correct = TRUE),
+  answer("Zambia, 2.85, is above 1.96: Zambia is an outlier."),
+  answer("Libya has the largest studentized residual, so it is an outlier."),
+  answer("Largest |t_i| is Zambia, 2.85, above the cut-off 2.01: Zambia is an outlier."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question_text(
+  lab_prompts[["q6"]],
+  open_answer(),
+  placeholder = "Without ..., the ddpi coefficient is ... (it was 0.41, se 0.20) ...",
+  trim = TRUE
+)
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("By a factor sqrt(6.63) = 2.57 compared with an uncorrelated pop75.", correct = TRUE),
+  answer("By a factor 6.63."),
+  answer("By 6.63 percentage points."),
+  answer("It is not inflated: VIF only matters above 10."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Part 2: selection and the lasso
+
+```{r select-ex, exercise=TRUE, exercise.lines=10}
+m_aic <- step(full_tr, trace = 0)
+formula(m_aic)
+# BIC: step(full_tr, trace = 0, k = log(nrow(train)))
+c(lambda_min = cv$lambda.min, lambda_1se = cv$lambda.1se)
+c(ols_full  = mse(predict(full_tr, test)),
+  step_aic  = mse(predict(m_aic, test)),
+  lasso_min = mse(predict(cv, x_te, s = "lambda.min")),
+  lasso_1se = mse(predict(cv, x_te, s = "lambda.1se")))
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("lcavol and lweight", correct = TRUE),
+  answer("lcavol, lweight and svi"),
+  answer("lcavol, lweight, age, lbph and svi"),
+  answer("all eight predictors"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q9}
+question(
+  lab_prompts[["q9"]],
+  answer("OLS with all eight predictors (about 0.55)", correct = TRUE),
+  answer("Step AIC (about 0.62)"),
+  answer("Step BIC (about 0.76)"),
+  answer("Lasso at lambda.min (about 0.63)"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "The leaky model had already seen ... A single split ...",
+  trim = TRUE
+)
+```
+
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

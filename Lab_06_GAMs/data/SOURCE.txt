@@ -1,0 +1,5 @@
+File: airquality.csv (153 rows, 6 columns: Ozone, Solar.R, Wind, Temp, Month, Day; missing values written as NA)
+Source: R package datasets (part of base R), data set `airquality`, written with write.csv(datasets::airquality, row.names = FALSE). Values unchanged.
+Original reference: Chambers, J. M., Cleveland, W. S., Kleiner, B. and Tukey, P. A. (1983), Graphical Methods for Data Analysis, Wadsworth. Data obtained from the New York State Department of Conservation (ozone) and the National Weather Service (meteorological data), New York, May to September 1973.
+License: the datasets package is distributed with R under the GNU General Public License, version 2 or 3 (GPL-2 | GPL-3).
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

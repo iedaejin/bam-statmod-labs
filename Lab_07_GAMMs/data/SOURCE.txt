@@ -1,0 +1,12 @@
+File: Oxboys.csv (234 rows, 4 columns: Subject, age, height, Occasion)
+Source: R package nlme, data set `Oxboys`. Written from as.data.frame(nlme::Oxboys) with Subject and Occasion converted from ordered factors to integer codes (their original labels, 1-26 and 1-9) and rows sorted by Subject and Occasion. Values unchanged.
+Variables: Subject = boy identifier; age = standardized age (dimensionless, from -1 to 1); height = height in cm; Occasion = measurement occasion 1-9.
+Original reference: Goldstein, H. (1987), Multilevel Models in Educational and Social Research, Oxford University Press. Also used in Pinheiro, J. C. and Bates, D. M. (2000), Mixed-Effects Models in S and S-PLUS, Springer.
+License: the nlme package is distributed under the GNU General Public License, version 2 or later (GPL (>= 2)).
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.
+
+File: mcycle.csv (133 rows, 2 columns: times, accel), used only in Section 6 for the smoother-as-mixed-model check
+Source: R package MASS, data set `mcycle`, written with write.csv(MASS::mcycle, row.names = FALSE). Values unchanged. Same file as in Lab 05.
+Original reference: Silverman, B. W. (1985), Some aspects of the spline smoothing approach to non-parametric curve fitting, Journal of the Royal Statistical Society B 47, 1-52. Also Venables, W. N. and Ripley, B. D. (2002), Modern Applied Statistics with S, 4th ed., Springer.
+License: the MASS package is distributed under the GNU General Public License, version 2 or 3 (GPL-2 | GPL-3).
+The lab text is course material for Statistical Modelling (BAM), IE University. It is not a work of the dataset authors.

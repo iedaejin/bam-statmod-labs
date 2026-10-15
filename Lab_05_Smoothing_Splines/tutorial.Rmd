@@ -1,0 +1,253 @@
+---
+title: "Lab 05 — Smoothing and splines in R"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(splines)
+library(mgcv)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+mc <- read.csv("data/mcycle.csv")
+x <- mc$times
+y <- mc$accel
+n <- nrow(mc)
+cv_loess <- function(span, folds) {
+  sse <- 0
+  for (k in unique(folds)) {
+    test <- folds == k
+    m <- loess(accel ~ times, data = mc[!test, ], span = span, degree = 2,
+               control = loess.control(surface = "direct"))
+    sse <- sse + sum((mc$accel[test] - predict(m, mc[test, ]))^2)
+  }
+  sse / n
+}
+spans <- seq(0.15, 0.60, by = 0.025)
+bbase <- function(x, xl = min(x) - 0.01, xr = max(x) + 0.01, nseg = 20, bdeg = 3) {
+  dx <- (xr - xl) / nseg
+  knots <- seq(xl - bdeg * dx, xr + bdeg * dx, by = dx)
+  B <- splineDesign(knots, x, ord = bdeg + 1, outer.ok = TRUE)
+  attr(B, "knots") <- knots
+  B
+}
+B <- bbase(x)
+D <- diff(diag(ncol(B)), differences = 2)
+pspline <- function(lambda) {
+  A <- crossprod(B) + lambda * crossprod(D)
+  theta <- solve(A, crossprod(B, y))
+  f <- drop(B %*% theta)
+  edf <- sum(diag(solve(A, crossprod(B))))
+  rss <- sum((y - f)^2)
+  list(f = f, theta = drop(theta), edf = edf, rss = rss, gcv = n * rss / (n - edf)^2)
+}
+lab_meta <- list(id = "lab05", title = "Smoothing and splines in R", open = c("q9", "q10"))
+lab_prompts <- c(
+  q1 = "Among polynomial degrees 1 to 15 (fitted with poly()), AIC is smallest for degree…",
+  q2 = "ksmooth(x, y, kernel = \"normal\", bandwidth = 5) uses a Gaussian kernel whose standard deviation h is about…",
+  q3 = "With set.seed(2027) and shuffled 10-fold CV over spans 0.15, 0.175, …, 0.60, the chosen LOESS span is…",
+  q4 = "Why does cross-validation with folds that follow the sorted times give a much larger CV error?",
+  q5 = "Among ns(times, df) with df = 4, …, 15 inside lm(), AIC is smallest for df = …",
+  q6 = "Your P-spline (20 segments, cubic, d = 2) with lambda chosen by GCV on the grid log10(lambda) = -3, -2.95, …, 6 has edf about…",
+  q7 = "gam(accel ~ s(times, bs = \"ps\"), method = \"GCV.Cp\") has edf 9.7, less than your P-spline. Why?",
+  q8 = "The residual standard deviation for 15 < times <= 40 divided by the one for times <= 15 (P-spline residuals) is about…",
+  q9 = "The residuals are heteroscedastic. Name two consequences for the fitted P-spline: one for its confidence band and one for the choice of lambda.",
+  q10 = "At about 12 effective df, the natural spline, smoothing spline, P-spline and LOESS fits are almost identical. Which would you report to a reader, and what single number makes the comparison fair?"
+)
+```
+
+## What you will do
+
+Compare polynomial, kernel, LOESS and spline smoothers on the motorcycle data, choose smoothing parameters by cross-validation and GCV, check a hand-coded P-spline against `mgcv`, and look at the residuals. The objects `mc`, `x`, `y`, `n`, `cv_loess()`, `spans`, `bbase()`, `B`, `D` and `pspline()` from `lab.qmd` are already loaded. Then download the `.txt`.
+
+## Polynomials and kernels
+
+Compute AIC for polynomial degrees 1 to 15.
+
+```{r poly-ex, exercise=TRUE, exercise.lines=4}
+aic <- sapply(1:15, function(q) AIC(lm(accel ~ poly(times, q), data = mc)))
+round(aic, 1)
+which.min(aic)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("12", correct = TRUE),
+  answer("15"),
+  answer("8"),
+  answer("3"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("1.85 ms, because ksmooth puts the kernel quartiles at ±0.25 × bandwidth.", correct = TRUE),
+  answer("5 ms: the bandwidth is the standard deviation."),
+  answer("2.5 ms: the bandwidth is the full width of the kernel."),
+  answer("1.25 ms: the bandwidth is four standard deviations."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## LOESS and cross-validation
+
+Run the shuffled 10-fold cross-validation. Keep the seed.
+
+```{r loess-ex, exercise=TRUE, exercise.lines=5}
+set.seed(2027)
+folds <- sample(rep(1:10, length.out = n))
+cv <- sapply(spans, cv_loess, folds = folds)
+spans[which.min(cv)]
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("0.35", correct = TRUE),
+  answer("0.475"),
+  answer("0.15"),
+  answer("0.60"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("Each test fold is a contiguous block of times, so the model has to extrapolate across a gap instead of interpolating.", correct = TRUE),
+  answer("Sorted folds have fewer observations in each fold."),
+  answer("LOESS cannot be fitted to sorted data."),
+  answer("Shuffling reduces the noise in the responses."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Splines
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("9", correct = TRUE),
+  answer("5"),
+  answer("12"),
+  answer("15"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+Choose $\lambda$ for your P-spline by GCV.
+
+```{r pspline-ex, exercise=TRUE, exercise.lines=6}
+loglam <- seq(-3, 6, by = 0.05)
+gcv <- sapply(loglam, function(l) pspline(10^l)$gcv)
+best <- loglam[which.min(gcv)]
+ps <- pspline(10^best)
+c(log10_lambda = best, edf = ps$edf, GCV = ps$gcv)
+```
+
+```{r q6}
+question(
+  lab_prompts[["q6"]],
+  answer("11.4 (lambda about 0.63)", correct = TRUE),
+  answer("23, the number of B-splines"),
+  answer("2, the dimension of the null space of the penalty"),
+  answer("9.7, the same as the default mgcv fit"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("The default basis has only k = 10 B-splines, which caps how flexible the fit can be.", correct = TRUE),
+  answer("mgcv chooses lambda by REML, which always smooths more."),
+  answer("mgcv uses a first-order difference penalty by default."),
+  answer("mgcv drops the intercept, which removes 1.7 degrees of freedom."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Residuals
+
+```{r resid-ex, exercise=TRUE, exercise.lines=6}
+loglam <- seq(-3, 6, by = 0.05)
+best <- loglam[which.min(sapply(loglam, function(l) pspline(10^l)$gcv))]
+r <- y - pspline(10^best)$f
+sds <- tapply(r, cut(x, c(0, 15, 40, 60)), sd)
+sds
+sds[2] / sds[1]
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("3.7: the noise is much larger during the impact than before it.", correct = TRUE),
+  answer("1.0: the variance is constant."),
+  answer("0.27: the noise is largest before 15 ms."),
+  answer("13: the ratio of the variances."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q9}
+question_text(
+  lab_prompts[["q9"]],
+  open_answer(),
+  placeholder = "The band uses one sigma for all times, so… The GCV criterion weights all residuals equally, so…",
+  trim = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "I would report… because… The comparison is fair because all fits have the same…",
+  trim = TRUE
+)
+```
+
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```

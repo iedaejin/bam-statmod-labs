@@ -1,0 +1,229 @@
+---
+title: "Lab 00 — Reproducible R and a first statistical model"
+subtitle: "Sessions 1–2: Prerequisites and introduction to statistical modelling"
+format:
+  html:
+    toc: true
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Learning goals
+
+By the end of this lab you should be able to:
+
+- work inside an RStudio project and read data with a **relative path**;
+- check that a data file is what you think it is;
+- write a statistical model as a systematic part plus a random part, and fit it with `lm()`;
+- compare two models through their residuals, residual standard deviation and residual sum of squares;
+- **simulate** data from a fitted model with a fixed seed and compare them with the observed data;
+- tell variability from uncertainty;
+- finish a report with `sessionInfo()` so that someone else can reproduce it.
+
+The data are the mean annual temperatures (°F) in New Haven, Connecticut, from 1912 to 1971: 60 values from the R dataset `nhtemp` (package `datasets`). One row is one year. Work in pairs; plan on 60–75 minutes.
+
+## Setup
+
+1. Download or clone the course repository and open the folder `Lab_00_Reproducible_R`. In RStudio choose *File → New Project → Existing Directory* and select this folder. RStudio now treats the folder as the **working directory**: every path below is relative to it.
+2. Do **not** call `setwd()`. A script that starts with `setwd("C:/Users/...")` only runs on one computer.
+3. Open `lab.qmd` (this file) and run the chunks one by one, or click *Render*. At the end, open `tutorial.Rmd` and click *Run Document* to answer the graded questions.
+
+```{r}
+library(ggplot2)
+nh <- read.csv("data/nhtemp.csv")   # relative path: data/ inside the project
+str(nh)
+head(nh)
+```
+
+## Check the data
+
+Before any model, check that the file contains what you expect. The CSV was written from the package dataset, so it must be identical to `data(nhtemp)`.
+
+```{r}
+data(nhtemp)                        # a "ts" object: a time series
+tsp(nhtemp)                         # start, end, frequency
+all.equal(nh$temp, as.numeric(nhtemp))
+all.equal(nh$year, as.numeric(time(nhtemp)))
+c(n = nrow(nh), first = min(nh$year), last = max(nh$year))
+summary(nh$temp)
+```
+
+Never type data values by hand. A single typo changes every number downstream, and nobody can check it.
+
+```{r}
+ggplot(nh, aes(year, temp)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Year", y = "Mean annual temperature (°F)",
+       title = "New Haven, 1912–1971")
+```
+
+**Your turn.**
+
+a. Which year was the coldest and which the warmest? (Use `which.min()` and `which.max()`.)
+b. Describe the series in two sentences: level, spread, and any visible change over time.
+
+## Model 1: constant mean plus noise
+
+The simplest statistical model says that every year has the same expected temperature and that years differ only by random noise:
+$$
+y_i = \mu + \varepsilon_i, \qquad \varepsilon_i \overset{\text{iid}}{\sim} N(0, \sigma^2), \qquad i = 1, \dots, 60.
+$$
+The **systematic part** is $\mu$; the **random part** is $\varepsilon_i$. Minimising $\sum_i (y_i-\mu)^2$ gives $\hat\mu = \bar y$, and under independence $\mathrm{Var}(\bar y) = \sigma^2/n$.
+
+```{r}
+ybar <- mean(nh$temp)
+s    <- sd(nh$temp)
+n    <- nrow(nh)
+c(mean = ybar, sd = s, se = s / sqrt(n))
+
+m1 <- lm(temp ~ 1, data = nh)       # "1" means: intercept only
+coef(m1)
+summary(m1)$sigma                   # residual SD = sample SD here
+```
+
+**Your turn.**
+
+a. Check by hand that `coef(m1)` equals `mean(nh$temp)` and that `summary(m1)$sigma` equals `sd(nh$temp)`.
+b. Compute a 95% confidence interval for $\mu$ with `confint(m1)` and by hand with `ybar + c(-1, 1) * qt(0.975, n - 1) * s / sqrt(n)`.
+
+## Model 2: a linear trend
+
+The second model lets the mean change linearly with time:
+$$
+y_i = \beta_0 + \beta_1 t_i + \varepsilon_i, \qquad \varepsilon_i \overset{\text{iid}}{\sim} N(0, \sigma^2).
+$$
+Model 1 is the special case $\beta_1 = 0$.
+
+```{r}
+m2 <- lm(temp ~ year, data = nh)
+coef(m2)
+10 * coef(m2)["year"]               # change per decade
+coef(lm(temp ~ I(year - 1912), data = nh))   # intercept = fitted value in 1912
+```
+
+The intercept of `m2` is the fitted temperature in the year 0, far outside the data: it has no meaning. Centring the year at 1912 gives an intercept that can be read.
+
+```{r}
+ggplot(nh, aes(year, temp)) +
+  geom_point() +
+  geom_hline(yintercept = ybar, colour = "firebrick") +
+  geom_abline(intercept = coef(m2)[1], slope = coef(m2)[2], colour = "navy") +
+  labs(x = "Year", y = "Temperature (°F)",
+       title = "Model 1 (red) and model 2 (blue)")
+```
+
+**Your turn.**
+
+a. Interpret the slope in one sentence, with units.
+b. Compute $\hat\beta_1 = S_{ty}/S_{tt}$ by hand in R, where $S_{tt}=\sum_i (t_i-\bar t)^2$ and $S_{ty}=\sum_i (t_i-\bar t)(y_i-\bar y)$, and check it against `coef(m2)`.
+
+## Compare the two models
+
+```{r}
+rss1 <- sum(resid(m1)^2)
+rss2 <- sum(resid(m2)^2)
+c(RSS1 = rss1, RSS2 = rss2,
+  sigma1 = summary(m1)$sigma, sigma2 = summary(m2)$sigma,
+  R2 = 1 - rss2 / rss1)
+```
+
+Model 2 contains model 1, so its RSS can never be larger. The question is whether the improvement is more than what noise alone would give. We answer it by simulation in the next section; Sessions 3 and 5 give the formal tests.
+
+Residuals are what the systematic part leaves behind. If the model is adequate they should look like noise: no trend, no pattern.
+
+```{r}
+res <- data.frame(year = rep(nh$year, 2),
+                  residual = c(resid(m1), resid(m2)),
+                  model = rep(c("Model 1", "Model 2"), each = n))
+ggplot(res, aes(year, residual)) +
+  geom_hline(yintercept = 0, colour = "grey50") +
+  geom_point() +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE) +
+  facet_wrap(~ model) +
+  labs(x = "Year", y = "Residual (°F)")
+```
+
+**Your turn.**
+
+a. Which model leaves a pattern in its residuals? Describe it.
+b. Make a normal Q–Q plot of the model 2 residuals (`qqnorm(resid(m2)); qqline(resid(m2))`). Is the normal assumption reasonable?
+
+## Simulate from the fitted model
+
+A fitted model is a **data-generating process**: plug in the estimates and it produces new data sets. If the model is adequate, its simulated series should look like the observed one. `simulate()` draws $y_i^\ast = \hat\mu_i + \varepsilon_i^\ast$ with $\varepsilon_i^\ast \sim N(0,\hat\sigma^2)$. Always set the seed first, so that you and your partner get the same numbers.
+
+```{r}
+set.seed(2027)
+sims2 <- simulate(m2, nsim = 20)    # 20 series of 60 years from model 2
+dim(sims2)
+
+long <- data.frame(year = rep(nh$year, 20),
+                   temp = unlist(sims2),
+                   series = rep(1:20, each = n))
+ggplot(long, aes(year, temp, group = series)) +
+  geom_line(colour = "grey70") +
+  geom_line(data = nh, aes(year, temp), inherit.aes = FALSE,
+            colour = "black", linewidth = 0.9) +
+  labs(x = "Year", y = "Temperature (°F)",
+       title = "Observed series (black) and 20 series simulated from model 2")
+```
+
+Now ask a sharper question: if there were **no** trend (model 1), how large would the fitted slope be, just by chance?
+
+```{r}
+slope_of <- function(y) coef(lm(y ~ nh$year))[2]
+b1_obs <- unname(coef(m2)[2])
+
+set.seed(2027)
+sims1 <- simulate(m1, nsim = 20)    # 20 series with no trend
+slopes1 <- apply(sims1, 2, slope_of)
+slopes2 <- apply(sims2, 2, slope_of)
+
+round(10 * c(observed = b1_obs, max_model1 = max(slopes1),
+             mean_model2 = mean(slopes2)), 3)   # deg F per decade
+sum(slopes1 >= b1_obs)              # how many no-trend series reach the observed slope?
+```
+
+**Your turn.**
+
+a. Repeat the model 1 simulation with `nsim = 1000`. What share of the simulated slopes is at least as large as the observed slope? What do you conclude about the trend?
+b. Compute `sd(slopes2)` with `nsim = 1000` and compare it with the standard error of the slope in `summary(m2)`.
+
+## Variability and uncertainty
+
+The residual SD $\hat\sigma$ measures **variability**: how much one year differs from the line. The standard error measures **uncertainty**: how well we know a parameter. More years of data reduce the second, not the first.
+
+```{r}
+new <- data.frame(year = 1972)
+predict(m2, new, interval = "confidence")   # where is the mean temperature in 1972?
+predict(m2, new, interval = "prediction")   # where will the 1972 value fall?
+```
+
+**Your turn.**
+
+a. Why is the prediction interval so much wider than the confidence interval?
+b. If we had 240 years from the same process, what would happen (roughly) to $s$ and to $\mathrm{se}(\bar y) = s/\sqrt{n}$?
+
+## Report reproducibly
+
+A report is reproducible when someone else, with your folder only, gets every number you got. Three habits make most of the difference: relative paths, `set.seed()` before anything random, and a record of the software.
+
+```{r}
+sessionInfo()
+```
+
+**Your turn.**
+
+a. Restart R (*Session → Restart R*) and render this file. Does it run from top to bottom without errors?
+b. Name one data-quality issue that could affect a 60-year temperature record from a single station, and say whether more years of data would fix it.
+
+## DELIVERABLE
+
+Open `tutorial.Rmd` in this folder and click *Run Document*. Answer all the questions (run the code in the exercise boxes to get the numbers), type your name, and download the `.txt` file. Upload the `.txt` to Blackboard **before the next session**. One file per student; you may work in pairs but each of you submits.
+
+## Source
+
+`nhtemp.csv` was written from the dataset `nhtemp` in the R package `datasets` (GPL-2 | GPL-3). Original source as given in `?nhtemp`: Vaux and Brinker (1972), *Cycles*. See `data/SOURCE.txt`.

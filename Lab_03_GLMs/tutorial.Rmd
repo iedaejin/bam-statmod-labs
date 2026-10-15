@@ -1,0 +1,234 @@
+---
+title: "Lab 03 — Generalized linear models in R"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+
+```{r setup, include=FALSE}
+library(learnr)
+library(tidyverse)
+library(MASS)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("lab_submission.R")
+bw <- read_csv("data/birthwt.csv", show_col_types = FALSE) %>%
+  mutate(race = factor(race, levels = c("white", "black", "other")),
+         ptd  = as.integer(ptl > 0)) %>%
+  as.data.frame()
+ships <- read_csv("data/ships.csv", show_col_types = FALSE) %>% as.data.frame()
+fit <- glm(low ~ age + lwt + race + smoke + ptd + ht + ui, family = binomial, data = bw)
+fit_nohist <- update(fit, . ~ . - ptd - ht - ui)
+set.seed(2027)
+train_id <- c(sample(which(bw$low == 1), 39), sample(which(bw$low == 0), 87))
+train <- bw[train_id, ]
+test  <- bw[-train_id, ]
+fit_tr <- glm(low ~ age + lwt + race + smoke + ptd + ht + ui, family = binomial, data = train)
+p_tr <- fitted(fit_tr)
+p_te <- predict(fit_tr, newdata = test, type = "response")
+rates <- function(p, y, cut) {
+  yhat <- as.integer(p >= cut)
+  c(sens = mean(yhat[y == 1] == 1), spec = mean(yhat[y == 0] == 0),
+    acc = mean(yhat == y))
+}
+sh <- subset(ships, service > 0)
+sh$type   <- factor(sh$type)
+sh$year   <- factor(sh$year)
+sh$period <- factor(sh$period)
+fit_p <- glm(incidents ~ type + year + period + offset(log(service)),
+             family = poisson, data = sh)
+fit_q <- update(fit_p, family = quasipoisson)
+fit_nb <- suppressWarnings(
+  glm.nb(incidents ~ type + year + period + offset(log(service)), data = sh))
+lab_meta <- list(id = "lab03", title = "Generalized linear models in R", open = c("q6", "q10"))
+lab_prompts <- c(
+  q1  = "In the birthwt logistic model, the odds ratio for smoke and its meaning are…",
+  q2  = "The 95% profile-likelihood interval for the odds ratio of hypertension (ht) is…",
+  q3  = "The likelihood-ratio test of the medical-history block (ptd, ht, ui) gives…",
+  q4  = "If missing a low-birth-weight baby costs 3 times as much as an unnecessary visit, the cost-optimal threshold for calibrated probabilities is…",
+  q5  = "With the threshold of the previous question, the test-set sensitivity and specificity are…",
+  q6  = "The Youden threshold chosen on the test set is 0.13, with test sensitivity 0.90 and specificity 0.44. Why can these numbers not be reported as the performance of the classifier?",
+  q7  = "In the ships Poisson model with offset log(service), the rate ratio for period 75 vs 60 means…",
+  q8  = "The Pearson estimate of the dispersion for the ships Poisson model is…",
+  q9  = "glm.nb() on ships warns that the iteration limit was reached and reports k (\"theta\") of about 50000. This means…",
+  q10 = "Which model would you report for ships (Poisson, quasi-Poisson or negative binomial), and why?"
+)
+```
+
+## What you will do
+
+Check the numbers from the lab, then answer the questions. The data and models are already loaded: `bw`, `fit` (logistic model on all births), `fit_nohist` (without `ptd`, `ht`, `ui`), `train`, `test`, `p_tr`, `p_te`, the function `rates()`, and for the ships `sh`, `fit_p` (Poisson), `fit_q` (quasi-Poisson) and `fit_nb` (negative binomial). Finish by downloading the `.txt` file.
+
+## Logistic regression for low birth weight
+
+```{r or-ex, exercise=TRUE, exercise.lines=3}
+round(exp(cbind(OR = coef(fit), confint(fit))), 3)
+```
+
+```{r q1}
+question(
+  lab_prompts[["q1"]],
+  answer("About 2.33. The odds of a low-birth-weight baby for smokers are about 2.3 times those of non-smokers of the same age, weight, race and medical history.", correct = TRUE),
+  answer("About 2.33. Smokers are 2.3 times as likely to have a low-birth-weight baby."),
+  answer("About 0.85. Smoking raises the probability of low birth weight by 0.85."),
+  answer("About 1.06. That is the smallest effect smoking can have."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q2}
+question(
+  lab_prompts[["q2"]],
+  answer("(1.64, 27.26)", correct = TRUE),
+  answer("(1.58, 24.95)"),
+  answer("(0.46, 3.22)"),
+  answer("(4.91, 7.67)"),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## Testing a block of predictors
+
+```{r lr-ex, exercise=TRUE, exercise.lines=4}
+anova(fit_nohist, fit, test = "Chisq")
+```
+
+```{r q3}
+question(
+  lab_prompts[["q3"]],
+  answer("LR = 17.74 on 3 df, p about 0.0005: the history block is needed.", correct = TRUE),
+  answer("LR = 196.83 on 180 df: the model fits well, so the block is needed."),
+  answer("LR = 6.41 on 2 df, p about 0.04."),
+  answer("LR = 17.74 on 183 df, p close to 1: the block is not needed."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+## From probabilities to decisions
+
+Remember: the threshold is chosen on the training data; the test data are used once, to evaluate.
+
+```{r thr-ex, exercise=TRUE, exercise.lines=5}
+c_star <- 1 / (1 + 3)
+rates(p_te, test$low, c_star)
+table(predicted = as.integer(p_te >= c_star), observed = test$low)
+```
+
+```{r q4}
+question(
+  lab_prompts[["q4"]],
+  answer("0.25, whatever the prevalence of low birth weight.", correct = TRUE),
+  answer("0.75, because missed cases are three times as costly."),
+  answer("0.31, the prevalence of low birth weight in the sample."),
+  answer("0.50, because the probabilities are calibrated."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q5}
+question(
+  lab_prompts[["q5"]],
+  answer("Sensitivity 0.70 and specificity 0.60.", correct = TRUE),
+  answer("Sensitivity 0.40 and specificity 0.81."),
+  answer("Sensitivity 0.67 and specificity 0.78."),
+  answer("Sensitivity 0.90 and specificity 0.44."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q6}
+question_text(
+  lab_prompts[["q6"]],
+  open_answer(),
+  placeholder = "The threshold was tuned with the test labels, so...",
+  trim = TRUE
+)
+```
+
+## Poisson regression and overdispersion
+
+```{r disp-ex, exercise=TRUE, exercise.lines=6}
+round(exp(cbind(RR = coef(fit_p), confint(fit_p))), 3)
+X2 <- sum(residuals(fit_p, type = "pearson")^2)
+c(phi_hat = X2 / df.residual(fit_p), k = fit_nb$theta)
+```
+
+```{r q7}
+question(
+  lab_prompts[["q7"]],
+  answer("Ships operating in 1975–79 have an incident rate about 1.47 times that in 1960–74, for ships of the same type and construction year (95% CI about 1.17 to 1.85).", correct = TRUE),
+  answer("Ships operating in 1975–79 have about 1.47 more incidents per month of service."),
+  answer("Ships operating in 1975–79 have 1.47 times as many incidents, whatever their months of service."),
+  answer("The rate in 1975–79 is 0.38 times the rate in 1960–74."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q8}
+question(
+  lab_prompts[["q8"]],
+  answer("About 1.69, the Pearson statistic 42.28 divided by 25 residual df.", correct = TRUE),
+  answer("About 1.55, the residual deviance divided by its df."),
+  answer("About 38.70, the residual deviance."),
+  answer("About 0.04, the p-value of the deviance test."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q9}
+question(
+  lab_prompts[["q9"]],
+  answer("The estimate of k runs off to infinity, so the negative binomial collapses to the Poisson: the extra variance is not of the form mu^2 / k.", correct = TRUE),
+  answer("A huge k means huge overdispersion, so the negative binomial is essential."),
+  answer("The negative binomial fits much better, because its AIC is larger."),
+  answer("The algorithm failed, so the data cannot be overdispersed."),
+  allow_retry = TRUE,
+  random_answer_order = TRUE
+)
+```
+
+```{r q10}
+question_text(
+  lab_prompts[["q10"]],
+  open_answer(),
+  placeholder = "phi-hat is..., k-hat is..., so I report...",
+  trim = TRUE
+)
+```
+
+## Submit
+
+Type your name, download the text file, and upload it. Submit the questions first so the file contains your answers. If nothing downloads, the same `.txt` is in this folder: select it in the Files pane and choose Export.
+
+```{r submit-ui, echo=FALSE}
+shiny::textInput("student_name", "Your name", placeholder = "Name Surname")
+shiny::downloadButton("download_txt", "Download submission .txt")
+```
+
+```{r submit-server, context="server"}
+output$download_txt <- shiny::downloadHandler(
+  filename = function() lab_submission_filename(input$student_name, lab_meta$id),
+  content = function(file) {
+    write_lab_submission(
+      path = file,
+      name = input$student_name,
+      lab_id = lab_meta$id,
+      lab_title = lab_meta$title,
+      state = learnr::get_tutorial_state(),
+      prompts = lab_prompts,
+      open = lab_meta$open
+    )
+    # The viewer in Posit Cloud often blocks the browser download.
+    file.copy(
+      file,
+      lab_submission_filename(input$student_name, lab_meta$id),
+      overwrite = TRUE
+    )
+  }
+)
+```
