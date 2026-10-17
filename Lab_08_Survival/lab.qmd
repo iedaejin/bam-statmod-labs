@@ -145,7 +145,7 @@ exp(10 * coef(fit_cox)["karno"])
 exp(10 * confint(fit_cox)["karno", ])
 ```
 
-Read the Karnofsky result this way: *holding treatment, cell type and age fixed, a patient whose Karnofsky score is 10 points higher has an estimated hazard of death 0.72 times as large (95% CI 0.65 to 0.80) at any time since randomisation, if the proportional hazards assumption holds.* A hazard ratio is a ratio of instantaneous death rates among patients still alive. It is not a ratio of survival times or of probabilities of dying.
+Read the Karnofsky result this way: *holding treatment, cell type and age fixed, a patient whose Karnofsky score is 10 points higher has an estimated hazard of death 0.72 times as large (95% CI 0.65 to 0.80), if the proportional hazards assumption holds.* We check that assumption in the next section, and it fails for `karno`: this single hazard ratio is a time-averaged summary, and the section after that gives the corrected estimates. A hazard ratio is a ratio of instantaneous death rates among patients still alive. It is not a ratio of survival times or of probabilities of dying.
 
 Does cell type add to the model? Compare nested Cox models with a likelihood ratio test:
 
@@ -205,7 +205,7 @@ AIC(fit_cox, fit_step)
 
 The split data set has one row per patient and period, with `(tstart, time]` the interval at risk. The partial likelihood of `fit_step` uses the same risk sets as `fit_cox`, so the two AIC values can be compared. The AIC of `fit_strat` cannot be compared with them: stratification changes the risk sets.
 
-**Your turn 8.1.** Report the hazard ratio per 10 Karnofsky points in each period (0–90, 90–180, more than 180 days) as $\exp(10\hat\beta)$. In which period does baseline fitness matter? Does the global PH test improve?
+**Your turn 8.1.** Report the hazard ratio per 10 Karnofsky points in each period (0–90, 90–180, more than 180 days) as $\exp(10\hat\beta)$. In which period does baseline fitness matter? Does the global PH test improve? Compare the hazard ratio of the test treatment in `fit_step` with the one in `fit_cox`: which one would you report, and why?
 
 **Your turn 8.2.** `celltype` is also flagged by `cox.zph()`. Fit the step-function model with `strata(celltype)` added (and `celltype` removed from the covariates). What do you gain and what do you lose?
 
@@ -215,7 +215,7 @@ Write a memo of about 150 words for a clinical audience. It must answer three qu
 
 1. Does the test treatment prolong survival?
 2. Which patients die sooner (cell type, Karnofsky score)?
-3. How does the association between the Karnofsky score and the hazard change over follow-up, and why does a single hazard ratio hide this?
+3. How does the association between the Karnofsky score and the hazard change over follow-up, and why does a single hazard ratio hide this? Report the hazard ratios from the corrected model (`fit_step`), not from the first fit.
 
 Use "hazard" for the instantaneous rate, not "risk" or "probability". Avoid causal language for the covariates that were not randomised.
 

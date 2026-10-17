@@ -8,18 +8,27 @@ Each `Lab_*` folder is one lab. Work in pairs during the lab session, then compl
 
 | File | Use |
 |---|---|
+| `Lab_NN_….Rproj` | Double-click it (or *File → Open Project*) first: RStudio then works inside the lab folder, so `data/...` paths work. |
 | `lab.qmd` | The guided analysis. Open it, run the chunks, answer the *Your turn* tasks, and render it to HTML. |
 | `tutorial.Rmd` | The graded part. Click **Run Document**, answer the questions, type your name and download the `.txt`. Upload that `.txt` to Blackboard before the next session. |
 | `lab_submission.R` | Leave it in the folder. The tutorial loads it. Do not run it yourself. |
 | `data/` | The dataset for the lab, with `SOURCE.txt`. |
 
+Install the packages once (from the repository folder):
+
 ```r
-install.packages(c("rmarkdown", "learnr", "tidyverse", "MASS", "faraway", "car",
-                   "glmnet", "nlme", "lme4", "mgcv", "gamm4", "survival"))
+source("install_course_packages.R")
+```
+
+Then, inside a lab project:
+
+```r
 rmarkdown::run("tutorial.Rmd")
 ```
 
-Always work from inside the lab folder: data paths are relative (`data/...`).
+Rendering `lab.qmd` needs Quarto, which ships with recent RStudio; on Posit Cloud it is preinstalled.
+
+Always work from inside the lab folder (open its `.Rproj`): data paths are relative (`data/...`). Never use `setwd()`.
 
 ## Where to run R
 

@@ -129,7 +129,7 @@ question(
 ```{r q6}
 question(
   lab_prompts[["q6"]],
-  answer("At any time since randomisation, an adeno-carcinoma patient alive at that time dies at about 3.25 times the rate of a squamous-cell patient with the same treatment, Karnofsky score and age.", correct = TRUE),
+  answer("On average over follow-up, an adeno-carcinoma patient alive at a given time dies at about 3.25 times the rate of a squamous-cell patient with the same treatment, Karnofsky score and age, assuming proportional hazards (only approximate for cell type).", correct = TRUE),
   answer("Adeno-carcinoma patients live 3.25 times shorter than squamous-cell patients."),
   answer("The probability of death is 3.25 times higher for adeno-carcinoma patients by the end of the study."),
   answer("Adeno-carcinoma causes 3.25 times as many deaths as squamous-cell cancer in the population."),

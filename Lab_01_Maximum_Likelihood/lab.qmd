@@ -282,6 +282,50 @@ table(round(runs[, "loglik"], 1))
 
 **Your turn.** Classify the 20 runs: which reached the two-component solution (in either labelling), which collapsed to a single normal ($p$ near 0 or 1), and which is degenerate (a standard deviation near 0)? Every run reports `convergence = 0`. Which one would you report, and why is it not simply the run with the largest log-likelihood?
 
+## Optional extension: censored observations
+
+Not every observation is a complete lifetime. If a patient is still alive when the study ends, we know only that the lifetime is *longer* than the follow-up time: the observation is **right-censored**. We record $(t_i,\delta_i)$ with $\delta_i=1$ for an event and $\delta_i=0$ for a censored time. An event contributes the density $f(t_i)$ to the likelihood and a censored unit contributes the survival probability $S(t_i)=P(T_i>t_i)$. For exponential lifetimes with rate $\lambda$,
+
+$$
+\ell(\lambda)=\sum_i\{\delta_i\log\lambda-\lambda t_i\}=d\log\lambda-\lambda\sum_i t_i,\qquad
+\hat\lambda=\frac{d}{\sum_i t_i},\qquad I(\lambda)=\frac{d}{\lambda^2},
+$$
+
+where $d=\sum_i\delta_i$ is the number of events. (This returns in Session 28; it is also needed for the midterm.) The data are the 11 patients of the maintained group of `survival::aml` (time in weeks).
+
+```{r}
+library(survival)
+aml1 <- subset(aml, x == "Maintained")
+tt <- aml1$time;  dl <- aml1$status
+d  <- sum(dl)
+c(n = length(tt), events = d, total_time = sum(tt))
+```
+
+We write the log-likelihood from the general formula (density for events, survival function for censored units), maximise it with `optim()` on the log scale, and compare with the closed form.
+
+```{r}
+nll_cens <- function(theta) {              # theta = log(lambda)
+  lam <- exp(theta)
+  -sum(dl * dexp(tt, lam, log = TRUE) +
+       (1 - dl) * pexp(tt, lam, lower.tail = FALSE, log.p = TRUE))
+}
+fit_c <- optim(log(0.02), nll_cens, method = "BFGS", hessian = TRUE)
+lam_c <- exp(fit_c$par)
+c(optim = lam_c, closed_form = d / sum(tt))                 # both 7/423 = 0.01655
+c(se_lambda = lam_c / sqrt(fit_c$hessian), closed_form = sqrt(d) / sum(tt))
+-fit_c$value                                                # maximised log-likelihood
+```
+
+Compare with the naive estimates that ignore censoring.
+
+```{r}
+c(mle = d / sum(tt),
+  naive_all_times  = 1 / mean(tt),                  # treats censored times as events
+  naive_events_only = d / sum(tt[dl == 1]))         # drops the censored units
+```
+
+**Your turn.** (1) Which naive estimator is closer to the MLE, and in which direction are both biased? (2) Compute the 95% Wald interval and the 95% likelihood interval for $\lambda$ (use `uniroot()` on $2\{\ell(\hat\lambda)-\ell(\lambda)\}-3.84$). Why is the Wald interval on the log scale, $\hat\lambda\,e^{\pm1.96/\sqrt d}$, preferable? (3) Check the fit with `survreg(Surv(time, status) ~ 1, data = aml1, dist = "exponential")`: its intercept is $-\log\hat\lambda$.
+
 ## Summary and model comparison
 
 ```{r}
