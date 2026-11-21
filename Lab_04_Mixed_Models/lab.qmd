@@ -125,7 +125,7 @@ rbind(REML = c(attr(VarCorr(fit_pp)$Subject, "stddev"), sigma = sigma(fit_pp)),
 
 ML gives smaller standard deviations of the random effects: it ignores that two fixed effects were estimated (the analogue of $\mathrm{RSS}/n$ versus $\mathrm{RSS}/(n-p)$). REML is less biased; it is not unbiased in general.
 
-**Testing a fixed effect** needs ML fits, because REML likelihoods of models with different fixed effects are not comparable. `anova()` refits with ML automatically:
+**Testing a fixed effect** needs ML fits, because REML likelihoods of models with different fixed effects are not comparable. The null model drops the fixed effect of `Days` but keeps the random slope `(Days | Subject)`, so only the average slope is tested. `anova()` refits with ML automatically:
 
 ```{r}
 fit_pp0 <- update(fit_pp, . ~ . - Days)
@@ -205,7 +205,7 @@ Conditional residuals $y-X\hat\beta-Z\tilde b$ check the within-subject part of 
 ## Part 6 — A binomial GLMM: `cbpp`
 
 The GLMM is specified conditionally on the herd effect:
-$\mathrm{logit}\,P(\text{new case}\mid b_{0i})=\beta_0+\beta_{\text{period}}+b_{0i}$, $b_{0i}\sim N(0,\sigma_b^2)$, i.e. $\E[y\mid b]=g^{-1}(X\beta+Zb)$.
+$\mathrm{logit}\,P(\text{new case}\mid b_{0i})=\beta_0+\beta_{\text{period}}+b_{0i}$, $b_{0i}\sim N(0,\sigma_b^2)$, i.e. $\mathrm{E}[y\mid b]=g^{-1}(X\beta+Zb)$.
 
 ```{r}
 fit_glm <- glm(cbind(incidence, size - incidence) ~ period, family = binomial, data = cbpp)

@@ -68,6 +68,8 @@ icc <- sd_b^2 / (sd_b^2 + sd_e^2)
 c(sd_b = sd_b, sd_e = sd_e, ICC = icc)
 ```
 
+This is the ICC of the random-intercept model. Without random slopes, the differences in growth rate between boys end up in the residual, so $\hat\sigma$ is inflated; the ICC changes once random slopes are added below.
+
 **Your turn.** (a) Interpret $\hat\sigma_b$ and $\hat\sigma$ in centimetres. (b) Why is the edf of `s(Subject)` close to 25 although there are 26 boys? (c) What does the edf of `s(age)` say about the shape of the population growth curve?
 
 ## Subject-specific curves
@@ -85,6 +87,8 @@ m3 <- gam(height ~ s(age, k = 5) + s(age, Subject, bs = "fs", k = 5),
 gam.vcomp(m2)$vc
 AIC(m1, m2, m3)
 ```
+
+`gam()` warns that the model "has repeated 1-d smooths of same variable" because `age` appears in `s(age)` and in the random slope. Here this is intended and harmless.
 
 Repeated measurements on a boy are taken in order, so look at the correlation between consecutive residuals of the same boy:
 
@@ -135,7 +139,7 @@ Eigen-decompose $S=U\Sigma U^\top$; write $\alpha=U_0\beta_0+U_+\Sigma_+^{-1/2}b
 
 $$y=X\beta+Zb+\varepsilon,\qquad X=[\mathbf 1,x],\quad Z=BU_+\Sigma_+^{-1/2},\quad b\sim N(0,\sigma_b^2I),\quad \lambda=\sigma^2/\sigma_b^2 .$$
 
-The Oxboys population curve is almost a straight line, so the variance of the wiggly part is essentially zero there and the check is not informative. We use a simple, clearly non-linear case instead: head acceleration after a simulated motorcycle impact (`mcycle`, Lab 05).
+The Oxboys population curve is only mildly non-linear and its wiggly variance is small next to the between-boy variance, so the check is hard to see there. We use a simple, clearly non-linear case instead: head acceleration after a simulated motorcycle impact (`mcycle`, Lab 05).
 
 ```{r}
 mc <- read.csv("data/mcycle.csv")

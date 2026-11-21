@@ -90,7 +90,7 @@ survdiff(Surv(time, status) ~ trt, data = vet)
 survdiff(Surv(time, status) ~ celltype, data = vet)
 ```
 
-The treatment comparison gives $X^2 = 0.008$ ($p = 0.93$). The log-rank test is most powerful when one group has a hazard that is a constant multiple of the other's. When the curves cross, as here, early and late differences cancel in $O - E$.
+The treatment comparison gives $X^2 = 0.008$ ($p = 0.93$; the print method rounds it to 0.9). The log-rank test is most powerful when one group has a hazard that is a constant multiple of the other's. When the curves cross, as here, early and late differences cancel in $O - E$.
 
 **Your turn 4.1.** Write one sentence on each test. For cell type, which group has many more deaths than expected, and which has many fewer?
 
@@ -205,7 +205,7 @@ AIC(fit_cox, fit_step)
 
 The split data set has one row per patient and period, with `(tstart, time]` the interval at risk. The partial likelihood of `fit_step` uses the same risk sets as `fit_cox`, so the two AIC values can be compared. The AIC of `fit_strat` cannot be compared with them: stratification changes the risk sets.
 
-**Your turn 8.1.** Report the hazard ratio per 10 Karnofsky points in each period (0–90, 90–180, more than 180 days) as $\exp(10\hat\beta)$. In which period does baseline fitness matter? Does the global PH test improve? Compare the hazard ratio of the test treatment in `fit_step` with the one in `fit_cox`: which one would you report, and why?
+**Your turn 8.1.** Report the hazard ratio per 10 Karnofsky points in each period (0–90, 90–180, more than 180 days) as $\exp(10\hat\beta)$. In which period does baseline fitness matter? Does the global PH test improve, and is PH now acceptable for every covariate? Compare the hazard ratio of the test treatment in `fit_step` with the one in `fit_cox`: which one would you report, and why?
 
 **Your turn 8.2.** `celltype` is also flagged by `cox.zph()`. Fit the step-function model with `strata(celltype)` added (and `celltype` removed from the covariates). What do you gain and what do you lose?
 

@@ -210,6 +210,8 @@ plot(aq$day, r, xlab = "day of season", ylab = "residual"); abline(h = 0, lty = 
 lines(lowess(aq$day, r), col = "red", lwd = 2)
 ```
 
+Only pairs of rows on consecutive days count: the days removed for missing values break the sequence, which is why there are fewer pairs than rows.
+
 **Your turn.** Which model do you choose and why (two reasons)? Is there evidence of serial correlation that would require a correlation structure (Session 27)?
 
 ## Predictions and partial effects you can explain
@@ -229,7 +231,7 @@ round(nd, 1)
 A contrast between two predictions has its own standard error. Use the linear-predictor matrix:
 
 ```{r}
-X <- predict(m_ti, data.frame(Temp = c(70, 90), Wind = 10, Solar.R = 207),
+X <- predict(m_ti, data.frame(Temp = c(70, 90), Wind = 10, Solar.R = median(aq$Solar.R)),
              type = "lpmatrix")
 d <- X[2, ] - X[1, ]
 est <- sum(d * coef(m_ti))

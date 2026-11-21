@@ -40,7 +40,7 @@ plot(accel ~ times, data = mc, pch = 16, col = "grey40",
      xlab = "Time after impact (ms)", ylab = "Head acceleration (g)")
 ```
 
-The data record the head acceleration of a crash-test dummy after a simulated motorcycle impact (Silverman, 1985). Three features matter for everything that follows: the curve is flat for the first 14 ms, then drops sharply to about $-120$ g and rebounds; the noise is small at the start and large in the middle; and the rows are **sorted by time**, with several tied times.
+The data record the head acceleration of a crash-test dummy after a simulated motorcycle impact (Silverman, 1985). Three features matter for everything that follows: the curve is flat for the first 14 ms, then drops sharply to about $-130$ g (the minimum is $-134$ g) and rebounds; the noise is small at the start and large in the middle; and the rows are **sorted by time**, with several tied times.
 
 ## Polynomials of increasing degree, and why they fail
 

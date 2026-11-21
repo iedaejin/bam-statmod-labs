@@ -175,6 +175,8 @@ The starting value `c(0, log(1 / mean(w)))` is the exponential fit itself ($\alp
 fitdistr(w, "gamma", start = list(shape = 20, rate = 0.3))$estimate
 ```
 
+If you run this in the console you will see a few "NaNs produced" warnings: the optimiser briefly tries negative parameter values, where the gamma density is not defined. They do not affect the result.
+
 Now the test:
 
 ```{r}
@@ -291,7 +293,7 @@ $$
 \hat\lambda=\frac{d}{\sum_i t_i},\qquad I(\lambda)=\frac{d}{\lambda^2},
 $$
 
-where $d=\sum_i\delta_i$ is the number of events. (This returns in Session 28; it is also needed for the midterm.) The data are the 11 patients of the maintained group of `survival::aml` (time in weeks).
+where $d=\sum_i\delta_i$ is the number of events. (This returns in Session 28.) The data are the 11 patients of the maintained group of `survival::aml` (time in weeks).
 
 ```{r}
 library(survival)

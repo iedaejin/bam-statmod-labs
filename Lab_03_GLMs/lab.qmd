@@ -230,6 +230,7 @@ rbind(quadratic = summary(ct_quadratic)$coefficients[1, ],
 Neither test rejects at 5% with only 34 cells, but the two shapes disagree: the quadratic $\hat\alpha$ is slightly negative, the linear one positive. Now fit the two remedies.
 
 ```{r}
+#| warning: true
 fit_q  <- glm(incidents ~ type + year + period + offset(log(service)),
               family = quasipoisson, data = sh)
 fit_nb <- glm.nb(incidents ~ type + year + period + offset(log(service)), data = sh)
@@ -296,7 +297,7 @@ round(sort(cd, decreasing = TRUE)[1:3], 3)
 sessionInfo()
 ```
 
-In `birthwt`, smoking, the mother's weight, race and her medical history are associated with low birth weight; the medical-history block is clearly needed (LR test). A threshold chosen on training data from costs performs better on new births than the default 0.5, but performance on held-out data is lower than on the training data. In `ships`, the incident rate depends on ship type, construction year and period of operation; the mild overdispersion is better handled by quasi-Poisson than by a negative binomial, whose quadratic variance does not fit these data.
+In `birthwt`, smoking, the mother's weight, race and her medical history are associated with low birth weight; the medical-history block is clearly needed (LR test). A threshold chosen on training data from costs ($c^*=0.25$) trades accuracy for sensitivity: on this split it gives a lower test-set cost than the default 0.5, the criterion it was built for. Performance on held-out data is lower than on the training data. In `ships`, the incident rate depends on ship type, construction year and period of operation; the mild overdispersion is better handled by quasi-Poisson than by a negative binomial, whose quadratic variance does not fit these data.
 
 ## DELIVERABLE
 
